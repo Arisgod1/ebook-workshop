@@ -1,0 +1,4 @@
+interface:
+  display_name: "电子书整理与 Kindle 页码"
+  short_description: "检查电子书章节与版本，整理 EPUB、迁移封面并准备 Kindle 估算页码"
+  default_prompt: "使用 $ebook-workshop 整理我提供的电子书，保留正文，核查版本与番外，制作适合目标设备的 EPUB 并说明验证范围。"
