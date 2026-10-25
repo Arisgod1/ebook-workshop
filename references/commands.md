@@ -1,4 +1,4 @@
-# 命令参考
+# 命令参考（自行操作时使用）
 
 依赖：Python 3.9+ 标准库。脚本路径相对 skill 根目录。全部写操作要求新的输出路径；源文件不覆盖。不自动访问网络、不查找或下载书籍、不发送邮件。
 
@@ -48,7 +48,7 @@ python3 scripts/ebook.py cover '/path/原整理本.epub' \
 
 或传 `--image '/path/封面.jpg'`。仅接受原图 PNG/JPEG，保持原始字节；不会裁切、生成或重新编码。
 
-支持任意 OPF 所在目录。旧图保留在包内以避免破坏可能的其他引用，新图成为声明封面，新封面页取代旧封面阅读入口，封面导航同步更新。原来的封面资源不一定被删除。导入书籍的整理说明中若写了封面来源，另行核对更新。此助手目前只对 EPUB 3 改封面；EPUB 2 先用成熟转换器规范转换并检查。
+替换后会同步更新书内封面和封面入口，正文保持不变。如果书中写有旧封面的来源说明，也需要一并更新。此操作目前支持 EPUB 3；较早的 EPUB 2 可先用 Calibre 转换。
 
 ## 估算页码
 
@@ -60,9 +60,9 @@ python3 scripts/ebook.py paginate '/path/无页码.epub' \
 
 `--chars` 为每页目标非空白字符数；分页落在段落边界，实际页长会波动。封面、语义标注的扉页、主导航不参与；其他阅读文档默认参与。多次 `--exclude` 可排除附录或报告，使用 EPUB 包内的精确路径。需要把正文、番外和附录全部纳入时，不排除相应文档。
 
-已有 `page-list`、`pagebreak` 或 NCX `pageList` 时拒绝二次分页，不自动丢弃已有映射。已加页码的书换封面即可，无需重新分页。
+已有页码的书不会被重复分页。只想换封面时直接更换，无需重做页码。
 
-## 验证
+## 额外检查（可选）
 
 ```bash
 python3 scripts/ebook.py validate '/path/书名.epub'
@@ -70,6 +70,6 @@ python3 scripts/ebook.py validate '/path/书名.epub' --epubcheck '/path/epubche
 python3 -m unittest discover -s tests -v
 ```
 
-结构检查覆盖 ZIP CRC读取、XML解析、重复 ID、manifest/spine、内部文件和锚点；不是标准兼容性或内容完整性的证明。`--epubcheck` 通过 Java 运行现有官方 EPUBCheck，打印退出码与原始输出；脚本不会自行下载或安装软件。
+`validate` 检查书内文件和跳转链接。需要更详细的格式检查时，可安装 Java 和 EPUBCheck，再使用 `--epubcheck`。这些检查不能代替正文内容核对。
 
 已有合法 EPUB 转其他格式时，可使用本机 Calibre 的 `ebook-convert`，但输出格式、设备兼容性与页码方案应分别确认。本仓库不捆绑转换器、EPUBCheck、插件或其依赖。

@@ -1,55 +1,71 @@
 # Ebook Workshop · 电子书整理 Skill
 
-一个面向 Codex 的电子书整理 skill，也附带可单独运行的 Python 命令行工具。
-
-它处理**你已有的 TXT / EPUB**：检查章节、比较版本、整理中文 EPUB、迁移原图封面，以及为 Kindle 邮件传书准备估算页码。默认无剧透，原文件不覆盖。
+把你已有的电子书整理成适合阅读的 EPUB，可以搭配 **WorkBuddy、Qoder、豆包、Codex** 等 AI 助手使用。
 
 ## 能做什么
 
-- 检查编码、章节乱号、疑似空章、重复段落、元数据和现有页码。
-- TXT → EPUB 3，保留前置文字、全部段落、作者留言与后记。
-- 从另一份 EPUB 迁移封面原图，更新封面页及导航。
-- 添加 EPUB 3 页码导航和 NCX 兼容页码表，方便尝试邮件 / Send to Kindle。
-- 检查资源、锚点和正文保真；可调用外部官方 EPUBCheck。
+- **检查内容**：查找空章、重复段落和章节编号问题，区分正文、番外与后记。
+- **比较版本**：对比多份电子书，帮助选择更合适的一版，默认不剧透。
+- **转换格式**：把 TXT 整理成 EPUB，填写书名、作者，制作可跳转的目录。
+- **整理排版**：调整段落、缩进、章节标题和阅读顺序。
+- **更换封面**：使用你提供的图片，或直接搬用另一份电子书里的封面。
+- **准备 Kindle 阅读**：根据传书方式处理文件，需要时添加估算页码。
 
-**章节齐备、逐字核对、格式合格、Kindle 实测是四件不同的事。** 工具不会把前20章抽查说成整本精校，也不会承诺邮件转换必然保留页码。估算页码不等于纸书页码或屏幕翻页次数。
+整理时保留原文件，输出文件使用标准书名，例如 `书名.epub`。
 
-## 安装为 Codex Skill
+## 怎么用
 
-将整个仓库目录放到你的 Codex skills 目录，目录名保持 `ebook-workshop`。例如先克隆仓库，再把仓库复制或链接到 `~/.codex/skills/ebook-workshop`（使用自定义 `CODEX_HOME` 时调整位置）。如果同名目录已存在，先检查内容，避免覆盖。
+### 1. 下载
 
-在 Codex 中调用：
+[点击下载](https://github.com/Arisgod1/ebook-workshop/archive/refs/heads/main.zip)，解压后保留整个文件夹。
 
-> 使用 $ebook-workshop 检查这两份电子书的正文与番外，不要剧透；选择适合的版本整理成带封面的 EPUB。我要通过邮件传到 Kindle，输出文件就叫标准书名。
+### 2. 交给 AI 助手
 
-核心入口是 [SKILL.md](SKILL.md)，具体操作见 [命令参考](references/commands.md) 和 [Kindle 页码说明](references/kindle-pages.md)。默认支持自动发现，无需只靠显式调用。
+如果你的助手支持导入 Skill，按它的安装方式导入；也可以直接让它打开这个文件夹，读取其中的 `SKILL.md`。
 
-## 独立使用
+助手需要能读取电子书并运行处理工具。只有聊天功能时，可以让它给出操作步骤，由你在电脑上执行。
 
-Python 3.9+，无第三方 Python 依赖：
+### 3. 告诉它你的需求
 
-```bash
-python3 scripts/ebook.py inspect '/path/书名.txt'
-python3 scripts/ebook.py build '/path/书名.txt' \
-  --title '书名' --author '作者' --cover '/path/封面.png' \
-  --output '/path/work/书名.epub'
-python3 scripts/ebook.py paginate '/path/work/书名.epub' \
-  --chars 500 --output '/path/delivery/书名.epub'
-python3 scripts/ebook.py validate '/path/delivery/书名.epub'
-```
+例如：
 
-脚本不会搜索或下载书籍，不联网、不发邮件、不上传用户文件，不移除 DRM。已有电子书格式的转换可以使用本机 Calibre；本仓库不捆绑 Calibre、Kindle Previewer 或 EPUBCheck。
+> 请按照这个项目的 SKILL.md 帮我整理电子书。比较这两份文件的正文和番外，默认不要剧透，选更合适的一版做成 EPUB。使用我指定的封面，书名和文件名保持标准写法。我要在 Kindle 上阅读，通过邮件传书，希望能显示页码。
 
-默认支持数字章号“第12章 标题”和“12|标题”；特殊规则用 `--pattern`。乱号只提示，不猜改。封面与分页修改助手目前支持 EPUB 3；EPUB 2 先规范转换。详情和限制见命令参考。
+也可以只做一件事：
 
-## 验证
+> 把这本 TXT 转成带封面的 EPUB，保留正文、番外和后记。
 
-```bash
-python3 -m unittest discover -s tests -v
-python3 scripts/ebook.py validate '/path/书名.epub' \
-  --epubcheck '/path/epubcheck.jar'
-```
+> 把另一份 EPUB 里的封面搬过来，正文不变。
 
-测试全部使用程序自造文本与最小图片，验证段落保真、显式标题修正、封面字节保留、页码锚点、拒绝覆盖及错误输入。仓库不附带任何小说、下载资源或第三方封面。
+> 整理这本书的段落和目录，让它在阅读器上看起来更舒服。
 
-许可：[MIT](LICENSE)。许可仅适用于本仓库代码和文档，不授予任何书籍、插画或字体的使用权。
+## 不同助手的接入方式
+
+- **WorkBuddy**：通过“上传技能”导入。
+- **Qoder 系列**：通过对应产品的 Skills 功能导入，或让它读取项目文件。
+- **豆包等对话助手**：提供 `SKILL.md` 和任务文件；能否直接处理取决于当前使用环境。
+- **其他 Agent**：读取项目中的 `SKILL.md`，按其中的方法操作。
+
+具体方法见 [接入说明](references/agent-integration.md)。
+
+### 以 Codex 为例
+
+将整个文件夹放到 `~/.codex/skills/ebook-workshop`，随后这样使用：
+
+> 使用 $ebook-workshop 帮我整理这本电子书，制作带封面的 EPUB。
+
+也可以不安装，直接让 Codex 读取项目里的 `SKILL.md`。本项目不依赖 Codex，其他助手按各自的方式接入即可。
+
+## Kindle 页码
+
+可以添加用于记录阅读进度的估算页码。它不对应纸书页数，也不一定每翻一屏就增加一页。通过邮件传书后，能否显示还取决于亚马逊的转换和设备情况。
+
+告诉助手你的 Kindle 型号，以及使用邮件还是 USB 传书，它会按对应方式准备。详见 [Kindle 使用说明](references/kindle-pages.md)。
+
+## 想自己操作？
+
+也可以直接使用附带的 Python 工具，操作方法见 [命令参考](references/commands.md)。
+
+项目只提供整理工具，不附带书籍或封面。
+
+[MIT 许可](LICENSE)
