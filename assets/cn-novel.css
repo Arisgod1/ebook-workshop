@@ -1,0 +1,42 @@
+@namespace epub url("http://www.idpf.org/2007/ops");
+
+body.workshop-cn-novel {
+    font-family: serif;
+    line-height: 1.8;
+    margin: 0 5%;
+    padding: 0;
+    text-align: start;
+    overflow-wrap: break-word;
+}
+
+body.workshop-cn-novel h1 {
+    font-size: 1.5em;
+    font-weight: normal;
+    line-height: 1.6;
+    margin: 2em 0 1.5em;
+    text-align: center;
+    page-break-after: avoid;
+    break-after: avoid;
+}
+
+body.workshop-cn-novel p {
+    text-indent: 2em;
+    margin: .5em 0;
+    orphans: 2;
+    widows: 2;
+}
+
+body.workshop-cn-novel [epub|type~="footnote"],
+body.workshop-cn-novel [epub|type~="endnote"],
+body.workshop-cn-novel [role="doc-footnote"],
+body.workshop-cn-novel [role="doc-endnote"] {
+    color: inherit;
+    font-size: .88em;
+}
+
+body.workshop-cn-novel [epub|type~="footnote"] p,
+body.workshop-cn-novel [epub|type~="endnote"] p,
+body.workshop-cn-novel [role="doc-footnote"] p,
+body.workshop-cn-novel [role="doc-endnote"] p {
+    text-indent: 0;
+}

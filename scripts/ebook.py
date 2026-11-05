@@ -15,7 +15,7 @@ import tempfile
 import uuid
 import zipfile
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 import xml.etree.ElementTree as ET
 
 H = 'http://www.w3.org/1999/xhtml'
@@ -470,6 +470,74 @@ def paginate(args):
     report({'output':args.output,'synthetic_pages':counter,'target_nonwhite_characters_per_page':args.chars,'documents_paginated':len(processed),'excluded':sorted(skip),'text_roundtrip':'passed','meaning':'Estimated fixed reference pages, not paper pages or screen turns','device_validation':'Not tested; Send to Kindle can alter/discard page information'})
 
 
+def layout(args):
+    files, opf, package = load(args.input)
+    if not package.get('version', '').startswith('3'):
+        raise ValueError('Layout preset requires EPUB 3')
+    if any(
+        meta.get('property') == 'rendition:layout'
+        and (meta.text or '').strip() == 'pre-paginated'
+        for meta in package.iter(q(O, 'meta'))
+    ) or any(
+        'rendition:layout-pre-paginated' in ref.get('properties', '').split()
+        for ref in package.iter(q(O, 'itemref'))
+    ):
+        raise ValueError('Layout preset requires a reflowable EPUB')
+    _, spine = inventory(files, opf, package)
+    eligible = {
+        path for path, item in spine
+        if path and item.get('media-type') == 'application/xhtml+xml'
+        and 'nav' not in item.get('properties', '').split()
+    }
+    style_path = posixpath.join(posixpath.dirname(opf), 'workshop-cn-novel.css')
+    style = (Path(__file__).resolve().parent.parent / 'assets' / 'cn-novel.css').read_bytes()
+    manifest = package.find(q(O, 'manifest'))
+    registered = [
+        item for item in manifest if resolve(opf, item.get('href'))[0] == style_path
+    ]
+    if style_path in files or registered:
+        if (files.get(style_path) != style or len(registered) != 1
+                or registered[0].get('media-type') != 'text/css'):
+            raise ValueError('Existing layout stylesheet conflicts with the preset')
+    else:
+        style_id = 'workshop-cn-novel'
+        while any(item.get('id') == style_id for item in manifest):
+            style_id += '-style'
+        ET.SubElement(manifest, q(O, 'item'), {
+            'id': style_id, 'href': posixpath.basename(style_path), 'media-type': 'text/css',
+        })
+    for path in dict.fromkeys(args.document):
+        if path not in eligible:
+            raise ValueError('Select a reading document from the EPUB spine: ' + path)
+        root = xml(files[path])
+        head, body = root.find(q(H, 'head')), root.find(q(H, 'body'))
+        if head is None or body is None or not visible(body).strip():
+            raise ValueError('Selected document has no readable body: ' + path)
+        if any(
+            set(e.get(q(EP, 'type'), '').split()) & {'cover', 'titlepage', 'toc'}
+            for e in body.iter()
+        ):
+            raise ValueError('Select a prose chapter instead of front matter: ' + path)
+        original_text = visible(body)
+        classes = body.get('class', '').split()
+        if 'workshop-cn-novel' not in classes:
+            body.set('class', ' '.join(classes + ['workshop-cn-novel']))
+        if not any(
+            'stylesheet' in link.get('rel', '').split()
+            and resolve(path, link.get('href', ''))[0] == style_path
+            for link in head.findall(q(H, 'link'))
+        ):
+            href = quote(posixpath.relpath(style_path, posixpath.dirname(path)))
+            ET.SubElement(head, q(H, 'link'), {'rel': 'stylesheet', 'type': 'text/css', 'href': href})
+        if visible(body) != original_text:
+            raise ValueError('Layout changed body text: ' + path)
+        files[path] = dump(root)
+    files[style_path] = style
+    files[opf] = dump(package)
+    write(files, args.output)
+    report({'output': args.output, 'preset': args.preset, 'documents': list(dict.fromkeys(args.document))})
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     sub=parser.add_subparsers(dest='command',required=True)
@@ -477,6 +545,13 @@ def main():
     a=sub.add_parser('build');a.add_argument('input');a.add_argument('--output',required=True);a.add_argument('--title',required=True);a.add_argument('--author',required=True);a.add_argument('--language',default='zh-CN');a.add_argument('--encoding');a.add_argument('--pattern',default=PATTERN);a.add_argument('--headings-json');a.add_argument('--cover');a.add_argument('--full-toc',action='store_true');a.set_defaults(run=build)
     a=sub.add_parser('cover');a.add_argument('input');a.add_argument('--output',required=True);g=a.add_mutually_exclusive_group(required=True);g.add_argument('--image');g.add_argument('--from-epub');a.set_defaults(run=cover)
     a=sub.add_parser('paginate');a.add_argument('input');a.add_argument('--output',required=True);a.add_argument('--chars',type=int,default=500,help='Approximate non-whitespace characters per synthetic page; 500 is a Chinese reading convention, not an industry standard');a.add_argument('--exclude',action='append',help='Exact archive path of a document to leave unnumbered, e.g. OEBPS/notes.xhtml');a.set_defaults(run=paginate)
+    layout_parser = sub.add_parser('layout', help='Apply a reading preset to selected EPUB 3 chapters')
+    layout_parser.add_argument('input')
+    layout_parser.add_argument('--output', required=True)
+    layout_parser.add_argument('--preset', choices=['cn-novel'], default='cn-novel')
+    layout_parser.add_argument('--document', action='append', required=True,
+                               help='Exact chapter path inside the EPUB. Repeat for each chapter.')
+    layout_parser.set_defaults(run=layout)
     a=sub.add_parser('validate');a.add_argument('input');a.add_argument('--epubcheck',help='Path to an externally installed official EPUBCheck JAR');a.set_defaults(run=validate)
     args=parser.parse_args()
     try:args.run(args)

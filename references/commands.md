@@ -73,3 +73,15 @@ python3 -m unittest discover -s tests -v
 `validate` 检查书内文件和跳转链接。需要更详细的格式检查时，可安装 Java 和 EPUBCheck，再使用 `--epubcheck`。这些检查不能代替正文内容核对。
 
 已有合法 EPUB 转其他格式时，可使用本机 Calibre 的 `ebook-convert`，但输出格式、设备兼容性与页码方案应分别确认。本仓库不捆绑转换器、EPUBCheck、插件或其依赖。
+
+## 套用中文小说排版
+
+```sh
+python3 scripts/ebook.py layout /path/to/book.epub \
+  --preset cn-novel \
+  --document OEBPS/c0001.xhtml \
+  --document OEBPS/c0002.xhtml \
+  --output /path/to/book-layout.epub
+```
+
+`--document` 使用 EPUB 内部的正文路径，可重复指定。上例使用本工具生成的常见路径，其他书的路径可能不同。可用 `python3 -m zipfile -l /path/to/book.epub` 查看包内文件，再按书内阅读顺序确认正文。试排时只传一个 `--document`，输出仍是整本书，可直接在阅读器里打开那一章检查。满意后，可以把试排版作为输入，选择更多章节并另存。预设调整段落、现有一级标题和带语义标记的注释。文字校订、空白块清理、添加缺失章号和复制样板书样式按 [精修流程](reading-workflow.md) 单独处理。

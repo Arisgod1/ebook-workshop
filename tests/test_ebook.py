@@ -58,6 +58,30 @@ class EbookTests(unittest.TestCase):
         self.assertIn('OEBPS/front.xhtml',files)
         self.cli('validate',book)
 
+    def test_layout_can_extend_trial_without_changing_existing_navigation(self):
+        book = self.build()
+        paged = self.root / 'paged.epub'
+        self.cli('paginate', book, '--output', paged)
+        trial = self.root / 'trial.epub'
+        final = self.root / 'final.epub'
+        first, second = 'OEBPS/c0001.xhtml', 'OEBPS/c0002.xhtml'
+        self.cli('layout', paged, '--document', first, '--output', trial)
+        self.cli('layout', trial, '--document', first, '--document', second, '--output', final)
+        original, _, _ = ebook.load(paged)
+        preview, _, _ = ebook.load(trial)
+        result, _, _ = ebook.load(final)
+        self.assertEqual(preview[second], original[second])
+        self.assertEqual(result[first], preview[first])
+        for name in (first, second):
+            old, new = [ebook.xml(f[name]).find(ebook.q(ebook.H, 'body'))
+                        for f in (original, result)]
+            self.assertEqual(list(old.itertext()), list(new.itertext()))
+            self.assertEqual([e.get('id') for e in old.iter()], [e.get('id') for e in new.iter()])
+            self.assertIn('workshop-cn-novel', new.get('class').split())
+        for name in ('OEBPS/nav.xhtml', 'OEBPS/toc.ncx'):
+            self.assertEqual(result[name], original[name])
+        self.cli('validate', final)
+
     def test_explicit_title_override_changes_no_body_paragraphs(self):
         fixes=self.root/'fixes.json';fixes.write_text(json.dumps({'2':'第2章 核实后的标题'}))
         book=self.build(extra=('--headings-json',fixes))
