@@ -6,8 +6,10 @@ import datetime
 import hashlib
 import html
 import json
+import os
 import posixpath
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -26,7 +28,7 @@ EP = 'http://www.idpf.org/2007/ops'
 C = 'urn:oasis:names:tc:opendocument:xmlns:container'
 for prefix, uri in [('', H), ('opf', O), ('dc', D), ('epub', EP), ('ncx', N)]:
     ET.register_namespace(prefix, uri)
-PATTERN = r'^\s*(?:第(?P<number>\d+)章\s*(?P<title>.*)|(?P<pipe_number>\d+)\|(?P<pipe_title>.*))$'
+PATTERN = r'^\s*(?:第(?P<number>\d+)章\s*(?P<title>.*)|(?P<pipe_number>\d+)\|(?P<pipe_title>.*)|(?P<section>正文|番外|后记|後記|附录|附錄)(?:[\s：:·（(一二三四五六七八九十0-9].*)?)$'
 CSS = '''body{font-family:serif;line-height:1.8;margin:0 5%;overflow-wrap:break-word}
 h1{font-size:1.5em;font-weight:normal;line-height:1.6;margin:2em 0 1.5em;text-align:center;break-after:avoid}
 p{text-indent:2em;margin:.5em 0;orphans:2;widows:2}nav ol{list-style:none;padding-left:1.2em}
@@ -151,7 +153,7 @@ def write(files, output):
             for name, body in files.items():
                 if name != 'mimetype':
                     z.writestr(name, body, compress_type=zipfile.ZIP_DEFLATED)
-        temp.replace(output)
+        os.link(temp, output)
     finally:
         temp.unlink(missing_ok=True)
 
@@ -236,42 +238,236 @@ def split_text(text, pattern):
     return prefix, chapters
 
 
-def inspect(args):
-    path = Path(args.input)
-    chapters = []
-    result = {'file': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+SECTION = re.compile(r'^(?:正文|番外|后记|後記|附录|附錄)(?=$|[\s：:·（(]|[一二三四五六七八九十0-9])')
+OCR = re.compile(r'(?<=[\u3400-\u9fff])(?:[A-Za-z][0-9]?|[0-9][A-Za-z])(?=[\u3400-\u9fff])|[�□■\ue000-\uf8ff]')
+
+
+def section_label(heading):
+    match = SECTION.match(heading)
+    return {'後記': '后记', '附錄': '附录'}.get(match[0], match[0]) if match else None
+
+
+def normalized(text):
+    return re.sub(r'\s+', '', text)
+
+
+def snapshot(path, args):
+    chapters, groups, records = [], [], []
+    semantic_hints = collections.Counter()
+    result = {'file': path.name}
     if path.suffix.lower() == '.txt':
-        text, encoding = decode(path, args.encoding)
-        prefix, chapters = split_text(text, args.pattern)
+        content, encoding = decode(path, args.encoding)
+        prefix, chapters = split_text(content, args.pattern)
         result.update(encoding=encoding, frontmatter_paragraphs=len(prefix))
+        records = [(None, line) for line in prefix]
+        for chapter in chapters:
+            records.extend((None, line) for line in chapter['paragraphs'])
+            groups.append(chapter['heading'])
     else:
         files, opf, package = load(path)
         _, spine = inventory(files, opf, package)
-        result['metadata'] = {tag: [e.text or '' for e in package.findall('.//' + q(D, tag))] for tag in ['title', 'creator', 'language']}
+        result['metadata'] = {tag: [e.text or '' for e in package.findall('.//' + q(D, tag))]
+                              for tag in ('title', 'creator', 'language')}
         result['spine_documents'] = len(spine)
+        result['reading_documents'] = []
+        result['page_markers'] = 0
         for name, item in spine:
             if item.get('media-type') != 'application/xhtml+xml':
                 continue
-            root = xml(files[name])
-            headings = [''.join(e.itertext()).strip() for e in root.iter() if e.tag in [q(H, 'h1'), q(H, 'h2'), q(H, 'h3')]]
-            heading = next((h for h in headings if re.match(r'^(?:第\d+章|\d+\|)', h)), None)
-            if heading:
-                m = re.match(r'^(?:第)?(\d+)', heading)
-                chapters.append({'heading': heading, 'number': int(m[1]), 'paragraphs': [''.join(e.itertext()).strip() for e in root.iter(q(H, 'p'))]})
-        result['page_markers'] = sum(1 for name, _ in spine if name.endswith('.xhtml') for e in xml(files[name]).iter() if 'pagebreak' in e.get(q(EP, 'type'), '').split())
-    numbers = [c['number'] for c in chapters if c['number'] is not None]
-    paras = [p for c in chapters for p in c['paragraphs']]
-    counts = collections.Counter(p for p in paras if len(p) > 150)
+            body = xml(files[name]).find(q(H, 'body'))
+            if body is None:
+                continue
+            result['page_markers'] += sum('pagebreak' in e.get(q(EP, 'type'), '').split() for e in body.iter())
+            if 'nav' in item.get('properties', '').split() or any(
+                set(e.get(q(EP, 'type'), '').split()) & {'cover', 'titlepage', 'toc'}
+                for e in body.iter()
+            ):
+                continue
+            result['reading_documents'].append(name)
+            labels = {'bodymatter': '正文', 'afterword': '后记', 'appendix': '附录'}
+            semantic_hints.update({label for e in body.iter()
+                                   for kind in e.get(q(EP, 'type'), '').split()
+                                   if (label := labels.get(kind))})
+            current = None
+            for element in body.iter():
+                value = ''.join(element.itertext()).strip() if element.tag in HEADINGS or element.tag == q(H, 'p') else ''
+                if element.tag in HEADINGS:
+                    match = re.match(args.pattern, value)
+                    number = (match.groupdict().get('number') or match.groupdict().get('pipe_number')) if match else None
+                    if match or section_label(value):
+                        current = {'heading': value, 'number': int(number) if number else None, 'paragraphs': []}
+                        chapters.append(current)
+                    if value:
+                        groups.append(value)
+                elif element.tag == q(H, 'p') and value:
+                    if current is not None:
+                        current['paragraphs'].append(value)
+                    records.append((name, value))
+    def hint(heading):
+        match = re.match(args.pattern, heading)
+        title = (match.groupdict().get('title') or match.groupdict().get('pipe_title')) if match else None
+        return section_label(heading) or section_label(title or '')
+    section_counts = collections.Counter(filter(None, map(hint, groups)))
+    numbers = [c['number'] for c in chapters if c['number'] is not None and not section_label(c['heading'])]
+    paras = collections.Counter(normalized(p) for _, p in records)
+    candidates = collections.Counter(name for name, paragraph in records if OCR.search(paragraph))
     result.update(chapter_headings_recognized=len(chapters), declared_numbers=numbers,
+                  section_heading_hints=dict(section_counts), section_markup_documents=dict(semantic_hints),
+                  empty_chapter_candidates=[i for i,c in enumerate(chapters,1) if not c['paragraphs']],
                   short_chapter_candidates=[i for i,c in enumerate(chapters,1) if sum(map(len,c['paragraphs'])) < 800],
                   duplicate_declared_numbers=sorted(n for n,c in collections.Counter(numbers).items() if c>1),
-                  repeated_long_paragraphs=sum(c-1 for c in counts.values() if c>1),
-                  replacement_characters=sum(p.count('\ufffd') for p in paras),
-                  scope='Structural candidates only; short/repeated sections do not prove missing story content')
+                  numbering_jumps=[(a,b) for a,b in zip(numbers,numbers[1:]) if b != a+1],
+                  repeated_paragraphs=sum(c-1 for p,c in paras.items() if c>1),
+                  repeated_long_paragraphs=sum(c-1 for p,c in paras.items() if c>1 and len(p)>150),
+                  replacement_characters=sum(p.count('�') for _,p in records),
+                  suspicious_paragraphs=sum(candidates.values()),
+                  suspicious_documents={name: count for name,count in candidates.items() if name is not None},
+                  scope='Heuristic; section labels and paragraph counts do not establish completeness')
     if args.show_headings:
         result['headings'] = [c['heading'] for c in chapters]
+    return result, paras
+
+
+HEADINGS = {q(H, 'h'+str(i)) for i in range(1, 7)}
+
+
+def inspect(args):
+    result, _ = snapshot(Path(args.input), args)
     report(result)
 
+
+def compare(args):
+    first, *others = [snapshot(Path(path), args) for path in args.inputs]
+    baseline, original = first
+    for info, _ in [first] + others:
+        info.pop('reading_documents', None)
+        info.pop('suspicious_documents', None)
+    comparisons = []
+    for other, paragraphs in others:
+        comparisons.append({'file': other['file'],
+                            'matching_paragraphs': sum((original & paragraphs).values()),
+                            'baseline_only_paragraphs': sum((original - paragraphs).values()),
+                            'other_only_paragraphs': sum((paragraphs - original).values())})
+    report({'baseline': baseline['file'], 'books': [baseline] + [item for item, _ in others],
+            'comparisons': comparisons,
+            'scope': 'Exact paragraphs ignoring whitespace; edits and paragraph splitting affect counts; no completeness verdict'})
+
+
+def book_title(package):
+    return (package.findtext('.//' + q(D, 'title')) or '').strip()
+
+
+def output_for(args, title, extension='.epub'):
+    if args.output:
+        return args.output
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', title).strip(' .')
+    if not safe:
+        raise ValueError('No usable book title; specify --output')
+    return str(Path(args.input).parent / '整理后' / (safe + extension))
+
+
+def correct(args):
+    files, opf, package = load(args.input)
+    _, spine = inventory(files, opf, package)
+    eligible = {name for name, item in spine if item.get('media-type') == 'application/xhtml+xml'
+                and 'nav' not in item.get('properties', '').split()}
+    edits = json.loads(Path(args.edits).read_text(encoding='utf-8'))
+    if not isinstance(edits, list) or not edits:
+        raise ValueError('Supply a nonempty JSON list of verified corrections')
+    roots = {}
+    pending = {}
+    for index, edit in enumerate(edits, 1):
+        if (not isinstance(edit, dict) or any(not isinstance(edit.get(key), str)
+                for key in ('document', 'old', 'new')) or not edit['old'] or edit['old'] == edit['new']):
+            raise ValueError(f'Invalid correction #{index}')
+        path, old, new = (edit[key] for key in ('document', 'old', 'new'))
+        if path not in eligible:
+            raise ValueError(f'Correction #{index}: document is not in the reading order')
+        if path not in roots:
+            roots[path] = xml(files[path])
+        body = roots[path].find(q(H, 'body'))
+        matches = []
+        for para in body.iter(q(H, 'p')) if body is not None else ():
+            if any(e.tag in {q(H, 'script'), q(H, 'style')} for e in para.iter()):
+                continue
+            for element in para.iter():
+                for field in ('text', 'tail') if element is not para else ('text',):
+                    value = getattr(element, field) or ''
+                    start = value.find(old)
+                    while start != -1:
+                        matches.append((element, field, start))
+                        start = value.find(old, start + 1)
+        if len(matches) != 1:
+            raise ValueError(f'Correction #{index}: expected one match in a single text node, found {len(matches)}')
+        element, field, start = matches[0]
+        pending.setdefault((element, field), []).append((start, start+len(old), new))
+    for (element, field), replacements in pending.items():
+        value = getattr(element, field)
+        limit = len(value)
+        for start, end, new in sorted(replacements, reverse=True):
+            if end > limit:
+                raise ValueError('Corrections overlap')
+            value = value[:start] + new + value[end:]
+            limit = start
+        setattr(element, field, value)
+    for path, root in roots.items():
+        files[path] = dump(root)
+    args.output = output_for(args, book_title(package))
+    write(files, args.output)
+    report({'output': args.output, 'corrections_applied': len(edits)})
+
+
+def convert(args):
+    suffix = Path(args.input).suffix.lower()
+    if suffix == '.doc':
+        raise ValueError('Save the legacy Word .doc as .docx in Word or LibreOffice before converting')
+    if args.format == 'epub' and suffix == '.epub':
+        raise ValueError('Input is already EPUB; use inspect, correct, layout or cover')
+    converter = shutil.which('ebook-convert')
+    mac = Path('/Applications/calibre.app/Contents/MacOS/ebook-convert')
+    if not converter and mac.is_file():
+        converter = str(mac)
+    if not converter:
+        raise ValueError('Install Calibre and make ebook-convert available to convert this format')
+    title = args.title
+    if args.format == 'azw3' and Path(args.input).suffix.lower() == '.epub':
+        _, _, package = load(args.input)
+        title = title or book_title(package)
+    with tempfile.TemporaryDirectory() as temp:
+        generated = Path(temp) / ('book.' + args.format)
+        cmd = [converter, str(Path(args.input).resolve()), str(generated)]
+        if args.format == 'epub':
+            cmd.extend(['--epub-version', '3'])
+        for flag, value in (('--title', title), ('--authors', args.author)):
+            if value:
+                cmd.extend([flag, value])
+        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if result.returncode or not generated.is_file() or not generated.stat().st_size:
+            raise ValueError('Calibre conversion failed; check whether the input format and file are supported')
+        if args.format == 'epub':
+            files, opf, package = load(generated)
+            if suffix == '.pdf':
+                _, spine = inventory(files, opf, package)
+                bodies = (
+                    xml(files[name]).find(q(H, 'body')) for name, item in spine
+                    if item.get('media-type') == 'application/xhtml+xml'
+                    and 'nav' not in item.get('properties', '').split()
+                )
+                if not any(any(ch.isalnum() for ch in visible(body)) for body in bodies if body is not None):
+                    raise ValueError('PDF conversion produced no readable text; run OCR on scanned pages before converting')
+            title = book_title(package)
+            args.output = output_for(args, title or Path(args.input).stem)
+            write(files, args.output)
+        else:
+            output = Path(output_for(args, title or Path(args.input).stem, '.azw3'))
+            if output.resolve() == Path(args.input).resolve():
+                raise ValueError('Output would replace the source')
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with output.open('xb') as dest, generated.open('rb') as src:
+                shutil.copyfileobj(src, dest)
+            args.output = str(output)
+    report({'output': args.output, 'format': args.format,
+            'next_step': 'Review metadata and TOC' if args.format == 'epub' else 'Use Calibre Send to device for USB delivery'})
 
 def page(title, body):
     return ('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html xmlns="'+H+'" xmlns:epub="'+EP+'" lang="zh-CN" xml:lang="zh-CN"><head><title>'+html.escape(title)+'</title><meta charset="utf-8"/><link rel="stylesheet" href="style.css"/></head><body>'+body+'</body></html>').encode()
@@ -332,6 +528,7 @@ def build(args):
         assert [''.join(e.itertext()) for e in root.iter(q(H,'p'))]==paras
     if args.cover:
         files=replace_cover(files,'OEBPS/content.opf',package,Path(args.cover).read_bytes())
+    args.output = output_for(args, args.title)
     write(files,args.output)
     report({'output':args.output,'encoding':encoding,'chapters':len(chapters),'preserved_frontmatter':bool(prefix),'heading_overrides':len(fixes),'paragraph_roundtrip':'passed','filename_note':'Use the standard book title as filename; keep workflow labels in reports'})
 
@@ -414,6 +611,7 @@ def cover(args):
     # Existing content documents are copied unchanged; only package and new cover resources differ.
     navigation={resolve(opf,e.get('href'))[0] for e in package.findall('./'+q(O,'manifest')+'/'+q(O,'item')) if 'nav' in e.get('properties','').split() or e.get('media-type')=='application/x-dtbncx+xml'}
     assert all(result[n]==b for n,b in files.items() if n!=opf and n not in navigation)
+    args.output = output_for(args, book_title(package))
     write(result,args.output)
     mime,ext,w,h=image_info(data)
     report({'output':args.output,'cover_pixels':[w,h],'cover_sha256':hashlib.sha256(data).hexdigest(),'original_image_bytes_preserved':True,'original_content_documents_unchanged':True,'cover_navigation_updated':True,'note':'Review edition/cover provenance statements in any existing colophon separately'})
@@ -466,8 +664,54 @@ def paginate(args):
             ET.SubElement(ET.SubElement(t,q(N,'navLabel')),q(N,'text')).text=str(number)
             ET.SubElement(t,q(N,'content'),{'src':posixpath.relpath(path,posixpath.dirname(ncx))+'#'+ident})
         files[ncx]=dump(root)
+    args.output = output_for(args, book_title(package))
     write(files,args.output)
     report({'output':args.output,'synthetic_pages':counter,'target_nonwhite_characters_per_page':args.chars,'documents_paginated':len(processed),'excluded':sorted(skip),'text_roundtrip':'passed','meaning':'Estimated fixed reference pages, not paper pages or screen turns','device_validation':'Not tested; Send to Kindle can alter/discard page information'})
+
+
+def kindle(args):
+    if args.method == 'usb':
+        if args.pages:
+            raise ValueError('For USB, generate estimated pages in Calibre when sending to the device')
+        args.format, args.title, args.author = 'azw3', None, None
+        return convert(args)
+    files, opf, package = load(args.input)
+    items, _ = inventory(files, opf, package)
+    has_pages = any(
+        any('page-list' in e.get(q(EP, 'type'), '').split() or e.tag == q(N, 'pageList')
+            for e in xml(files[resolve(opf, item.get('href'))[0]]).iter())
+        for item in items.values()
+        if 'nav' in item.get('properties', '').split() or item.get('media-type') == 'application/x-dtbncx+xml'
+    )
+    if args.pages and not has_pages:
+        return paginate(args)
+    args.output = output_for(args, book_title(package))
+    write(files, args.output)
+    report({'output': args.output, 'existing_page_list_preserved': has_pages,
+            'next_step': 'Send EPUB via Send to Kindle; page display depends on Amazon conversion and the device'})
+
+
+def layout_style(args):
+    style = (Path(__file__).resolve().parent.parent / 'assets' / 'cn-novel.css').read_text(encoding='utf-8')
+    custom = False
+    for attr, lower, upper, original, template in (
+        ('margin', 0, 25, 'margin: 0 5%;', 'margin: 0 %g%%;'),
+        ('line_height', 1, 3, 'line-height: 1.8;', 'line-height: %g;'),
+        ('indent', 0, 6, 'text-indent: 2em;', 'text-indent: %gem;'),
+        ('paragraph_gap', 0, 3, 'margin: .5em 0;', 'margin: %gem 0;'),
+    ):
+        value = getattr(args, attr)
+        if value is None:
+            continue
+        if not lower <= value <= upper:
+            raise ValueError(f'{attr} must be between {lower} and {upper}')
+        style = style.replace(original, template % value, 1)
+        custom = True
+    style = style.encode('utf-8')
+    stem = 'workshop-cn-novel'
+    if custom:
+        stem += '-' + hashlib.sha256(style).hexdigest()[:12]
+    return stem, style
 
 
 def layout(args):
@@ -489,8 +733,8 @@ def layout(args):
         if path and item.get('media-type') == 'application/xhtml+xml'
         and 'nav' not in item.get('properties', '').split()
     }
-    style_path = posixpath.join(posixpath.dirname(opf), 'workshop-cn-novel.css')
-    style = (Path(__file__).resolve().parent.parent / 'assets' / 'cn-novel.css').read_bytes()
+    style_id, style = layout_style(args)
+    style_path = posixpath.join(posixpath.dirname(opf), style_id + '.css')
     manifest = package.find(q(O, 'manifest'))
     registered = [
         item for item in manifest if resolve(opf, item.get('href'))[0] == style_path
@@ -500,7 +744,6 @@ def layout(args):
                 or registered[0].get('media-type') != 'text/css'):
             raise ValueError('Existing layout stylesheet conflicts with the preset')
     else:
-        style_id = 'workshop-cn-novel'
         while any(item.get('id') == style_id for item in manifest):
             style_id += '-style'
         ET.SubElement(manifest, q(O, 'item'), {
@@ -522,11 +765,22 @@ def layout(args):
         classes = body.get('class', '').split()
         if 'workshop-cn-novel' not in classes:
             body.set('class', ' '.join(classes + ['workshop-cn-novel']))
-        if not any(
-            'stylesheet' in link.get('rel', '').split()
-            and resolve(path, link.get('href', ''))[0] == style_path
-            for link in head.findall(q(H, 'link'))
-        ):
+        workshop_styles = {
+            resolve(opf, item.get('href'))[0] for item in manifest
+            if item.get('media-type') == 'text/css'
+            and re.fullmatch(r'workshop-cn-novel(?:-[0-9a-f]{12})?\.css', item.get('href', ''))
+            and item.get('id', '').startswith('workshop-cn-novel')
+        }
+        linked = False
+        for link in head.findall(q(H, 'link')):
+            if 'stylesheet' not in link.get('rel', '').split():
+                continue
+            target = resolve(path, link.get('href', ''))[0]
+            if target == style_path and not linked:
+                linked = True
+            elif target in workshop_styles:
+                head.remove(link)
+        if not linked:
             href = quote(posixpath.relpath(style_path, posixpath.dirname(path)))
             ET.SubElement(head, q(H, 'link'), {'rel': 'stylesheet', 'type': 'text/css', 'href': href})
         if visible(body) != original_text:
@@ -534,6 +788,7 @@ def layout(args):
         files[path] = dump(root)
     files[style_path] = style
     files[opf] = dump(package)
+    args.output = output_for(args, book_title(package))
     write(files, args.output)
     report({'output': args.output, 'preset': args.preset, 'documents': list(dict.fromkeys(args.document))})
 
@@ -542,20 +797,44 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     sub=parser.add_subparsers(dest='command',required=True)
     a=sub.add_parser('inspect');a.add_argument('input');a.add_argument('--encoding');a.add_argument('--pattern',default=PATTERN);a.add_argument('--show-headings',action='store_true');a.set_defaults(run=inspect)
-    a=sub.add_parser('build');a.add_argument('input');a.add_argument('--output',required=True);a.add_argument('--title',required=True);a.add_argument('--author',required=True);a.add_argument('--language',default='zh-CN');a.add_argument('--encoding');a.add_argument('--pattern',default=PATTERN);a.add_argument('--headings-json');a.add_argument('--cover');a.add_argument('--full-toc',action='store_true');a.set_defaults(run=build)
-    a=sub.add_parser('cover');a.add_argument('input');a.add_argument('--output',required=True);g=a.add_mutually_exclusive_group(required=True);g.add_argument('--image');g.add_argument('--from-epub');a.set_defaults(run=cover)
-    a=sub.add_parser('paginate');a.add_argument('input');a.add_argument('--output',required=True);a.add_argument('--chars',type=int,default=500,help='Approximate non-whitespace characters per synthetic page; 500 is a Chinese reading convention, not an industry standard');a.add_argument('--exclude',action='append',help='Exact archive path of a document to leave unnumbered, e.g. OEBPS/notes.xhtml');a.set_defaults(run=paginate)
+    a=sub.add_parser('compare', help='Compare two or more TXT/EPUB editions without quoting text')
+    a.add_argument('inputs', nargs='+')
+    a.add_argument('--encoding')
+    a.add_argument('--pattern', default=PATTERN)
+    a.set_defaults(run=compare, show_headings=False)
+    a=sub.add_parser('correct', help='Apply verified exact corrections from JSON')
+    a.add_argument('input'); a.add_argument('--edits', required=True); a.add_argument('--output')
+    a.set_defaults(run=correct)
+    a=sub.add_parser('convert', help='Convert with Calibre')
+    a.add_argument('input'); a.add_argument('--output'); a.add_argument('--title'); a.add_argument('--author')
+    a.add_argument('--format', choices=['epub', 'azw3'], default='epub')
+    a.set_defaults(run=convert)
+    a=sub.add_parser('build');a.add_argument('input');a.add_argument('--output');a.add_argument('--title',required=True);a.add_argument('--author',required=True);a.add_argument('--language',default='zh-CN');a.add_argument('--encoding');a.add_argument('--pattern',default=PATTERN);a.add_argument('--headings-json');a.add_argument('--cover');a.add_argument('--full-toc',action='store_true');a.set_defaults(run=build)
+    a=sub.add_parser('cover');a.add_argument('input');a.add_argument('--output');g=a.add_mutually_exclusive_group(required=True);g.add_argument('--image');g.add_argument('--from-epub');a.set_defaults(run=cover)
+    a=sub.add_parser('paginate');a.add_argument('input');a.add_argument('--output');a.add_argument('--chars',type=int,default=500,help='Approximate non-whitespace characters per synthetic page; 500 is a Chinese reading convention, not an industry standard');a.add_argument('--exclude',action='append',help='Exact archive path of a document to leave unnumbered, e.g. OEBPS/notes.xhtml');a.set_defaults(run=paginate)
+    a=sub.add_parser('kindle', help='Prepare an EPUB for email or convert to AZW3 for USB')
+    a.add_argument('input'); a.add_argument('--output')
+    a.add_argument('--method', choices=['email', 'usb'], required=True)
+    a.add_argument('--pages', action='store_true', help='Add estimated pages to EPUB for email, if absent')
+    a.add_argument('--chars', type=int, default=500); a.add_argument('--exclude', action='append')
+    a.set_defaults(run=kindle)
     layout_parser = sub.add_parser('layout', help='Apply a reading preset to selected EPUB 3 chapters')
     layout_parser.add_argument('input')
-    layout_parser.add_argument('--output', required=True)
+    layout_parser.add_argument('--output')
     layout_parser.add_argument('--preset', choices=['cn-novel'], default='cn-novel')
     layout_parser.add_argument('--document', action='append', required=True,
                                help='Exact chapter path inside the EPUB. Repeat for each chapter.')
+    layout_parser.add_argument('--margin', type=float, help='Left/right margin in percent')
+    layout_parser.add_argument('--line-height', type=float, help='Line height multiplier')
+    layout_parser.add_argument('--indent', type=float, help='First-line indent in em')
+    layout_parser.add_argument('--paragraph-gap', type=float, help='Vertical paragraph margin in em')
     layout_parser.set_defaults(run=layout)
     a=sub.add_parser('validate');a.add_argument('input');a.add_argument('--epubcheck',help='Path to an externally installed official EPUBCheck JAR');a.set_defaults(run=validate)
     args=parser.parse_args()
+    if args.command == 'compare' and len(args.inputs) < 2:
+        parser.error('compare requires at least two files')
     try:args.run(args)
-    except (ValueError,KeyError,ET.ParseError,zipfile.BadZipFile,OSError,UnicodeError,struct.error) as e:
+    except (ValueError,KeyError,ET.ParseError,zipfile.BadZipFile,OSError,UnicodeError,struct.error,re.error) as e:
         print('Error: '+str(e),file=sys.stderr);return 1
     return 0
 

@@ -6,6 +6,7 @@ import io
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -44,6 +45,77 @@ class EbookTests(unittest.TestCase):
         out=self.root/name
         self.cli('build',self.txt,'--title','示例书名','--author','测试作者','--output',out,*extra)
         return out
+
+    def test_compare_reports_structure_and_noise_without_excerpts(self):
+        first = self.root / 'first.txt'
+        second = self.root / 'second.txt'
+        first.write_text('正文\n第1章 私密标题\n相同段落。\n第3章\n番外：不展示\n中文i兑字。\n后记\n相同段落。', encoding='utf8')
+        second.write_text('第1章\n相 同 段 落。\n', encoding='utf8')
+        third = self.build()
+        result = self.cli('compare', first, second, third)
+        self.assertEqual(result['books'][0]['section_heading_hints'], {'正文': 1, '番外': 1, '后记': 1})
+        self.assertEqual(result['books'][0]['empty_chapter_candidates'], [1, 3])
+        self.assertEqual(result['books'][0]['numbering_jumps'], [[1, 3]])
+        self.assertEqual(result['books'][0]['suspicious_paragraphs'], 1)
+        self.assertEqual(result['comparisons'][0]['matching_paragraphs'], 1)
+        self.assertNotIn('私密标题', str(result))
+        self.assertNotIn('中文i兑字', str(result))
+
+    def test_correct_refuses_ambiguous_edits_and_preserves_navigation(self):
+        book = self.build()
+        edits = self.root / 'edits.json'
+        document = 'OEBPS/c0001.xhtml'
+        fixes = [{'document': document, 'old': '自造', 'new': '编写'}]
+        edits.write_text(json.dumps(fixes + [{'document': document, 'old': '用于验证', 'new': '另写'}]))
+        self.cli('correct', book, '--edits', edits, ok=False)
+        output = self.root / '整理后' / '示例书名.epub'
+        self.assertFalse(output.exists())
+        edits.write_text(json.dumps(fixes))
+        self.assertEqual(self.cli('correct', book, '--edits', edits)['output'], str(output))
+        before, _, _ = ebook.load(book)
+        after, _, _ = ebook.load(output)
+        self.assertEqual([name for name in before if before[name] != after[name]], [document])
+        self.assertIn('编写', ebook.visible(ebook.xml(after[document])))
+        self.cli('correct', book, '--edits', edits, ok=False)
+
+    def test_custom_layout_replaces_preset_in_selected_chapter_only(self):
+        book = self.build()
+        preset = self.root / 'preset.epub'
+        first, second = 'OEBPS/c0001.xhtml', 'OEBPS/c0002.xhtml'
+        self.cli('layout', book, '--document', first, '--document', second, '--output', preset)
+        result = self.cli('layout', preset, '--document', first, '--margin', 8, '--indent', 0)
+        files, _, _ = ebook.load(result['output'])
+        old, _, _ = ebook.load(preset)
+        self.assertEqual(files[second], old[second])
+        self.assertNotIn(b'href="workshop-cn-novel.css"', files[first])
+        custom, = [data for name, data in files.items() if 'workshop-cn-novel-' in name]
+        self.assertIn(b'margin: 0 8%', custom)
+        self.assertIn(b'text-indent: 0em', custom)
+        self.assertEqual(ebook.visible(ebook.xml(files[first])), ebook.visible(ebook.xml(old[first])))
+
+    def test_kindle_email_adds_pages_and_preserves_existing_page_list(self):
+        book = self.build()
+        paged = self.cli('kindle', book, '--method', 'email', '--pages')
+        self.assertGreater(paged['synthetic_pages'], 0)
+        copy = self.root / 'email.epub'
+        info = self.cli('kindle', paged['output'], '--method', 'email', '--pages', '--output', copy)
+        self.assertTrue(info['existing_page_list_preserved'])
+        self.assertEqual(ebook.load(copy)[0], ebook.load(paged['output'])[0])
+
+    def test_calibre_command_uses_epub3_and_preserves_output_metadata(self):
+        book = self.build()
+        source = self.root / 'source.mobi'
+        source.write_bytes(b'synthetic source')
+        def simulate(argv, **kwargs):
+            self.assertEqual(argv[1], str(source.resolve()))
+            self.assertEqual(argv[3:], ['--epub-version', '3', '--title', '示例书名', '--authors', '测试作者'])
+            Path(argv[2]).write_bytes(book.read_bytes())
+            return type('Completed', (), {'returncode': 0})()
+        with patch.object(ebook.shutil, 'which', return_value='/mock/ebook-convert'), patch.object(ebook.subprocess, 'run', side_effect=simulate):
+            output = self.cli('convert', source, '--title', '示例书名', '--author', '测试作者')['output']
+        self.assertEqual(Path(output).name, '示例书名.epub')
+        self.cli('validate', output)
+        self.assertEqual(source.read_bytes(), b'synthetic source')
 
     def test_build_preserves_content_and_does_not_infer_chapter_fixes(self):
         book=self.build(extra=('--cover',self.cover))
