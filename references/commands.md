@@ -130,3 +130,7 @@ python3 scripts/ebook.py layout /path/to/book.epub \
 可加 `--margin 6 --line-height 1.7 --indent 2 --paragraph-gap 0.4`，分别表示左右各 6%、1.7 倍行距、两字缩进与上下各 0.4em 的段间距。
 
 `--document` 使用 EPUB 内部的正文路径，可重复指定。上例使用本工具生成的常见路径，其他书的路径可能不同。可在 `inspect` 的 `reading_documents` 中查看路径，再按书内阅读顺序确认正文。试排时只传一个 `--document`，输出仍是整本书，可直接在阅读器里打开那一章检查。满意后，可以把试排版作为输入，选择更多章节并另存。预设调整段落、现有一级标题和带语义标记的注释。文字校订、空白块清理、添加缺失章号和复制样板书样式按 [精修流程](reading-workflow.md) 单独处理。
+
+## 整本书字典校对
+
+可用 `proofread` 扫描疑点、`proofread-review` 分批复核、`proofread-apply` 应用已确认勘误。详见 [校对流程](proofreading.md)。

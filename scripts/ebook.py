@@ -830,6 +830,11 @@ def main():
     layout_parser.add_argument('--paragraph-gap', type=float, help='Vertical paragraph margin in em')
     layout_parser.set_defaults(run=layout)
     a=sub.add_parser('validate');a.add_argument('input');a.add_argument('--epubcheck',help='Path to an externally installed official EPUBCheck JAR');a.set_defaults(run=validate)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('workshop_proofread', Path(__file__).with_name('proofread.py'))
+    proofread = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(proofread)
+    proofread.register(sub, argparse.Namespace(**globals()))
     args=parser.parse_args()
     if args.command == 'compare' and len(args.inputs) < 2:
         parser.error('compare requires at least two files')

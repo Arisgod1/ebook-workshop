@@ -1,0 +1,30 @@
+{
+  "description": "Small original starter vocabulary. Extend with verified, licensed dictionaries. Not a comprehensive Chinese lexicon.",
+  "words": [
+    "干活",
+    "千万人",
+    "千万",
+    "以经验",
+    "经验",
+    "末尾",
+    "未来",
+    "已经",
+    "自己",
+    "镇静",
+    "接受",
+    "失败"
+  ],
+  "protected": [],
+  "confusions": {
+    "千": "干",
+    "干": "千",
+    "未": "末",
+    "末": "未",
+    "己": "已巳",
+    "已": "己巳",
+    "巳": "己已"
+  },
+  "replacements": {
+    "i兑": "说"
+  }
+}
