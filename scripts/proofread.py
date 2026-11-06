@@ -2,6 +2,7 @@
 import hashlib
 import json
 import re
+import os
 import math
 import time
 import collections
@@ -93,6 +94,27 @@ def jieba_resources():
                                   'license': 'MIT', 'entries': len(frequencies)}
 
 
+def load_enhancements(lexicon, model_path):
+    tokenizer, frequencies, provenance, scorer, model_hash = None, {}, None, None, None
+    notes = []
+    if lexicon != 'starter':
+        try:
+            tokenizer, frequencies, provenance = jieba_resources()
+        except (ImportError, OSError, ValueError) as exc:
+            notes.append('Jieba unavailable; using starter dictionary: ' + str(exc))
+    if model_path:
+        try:
+            import kenlm
+            model_hash = hashlib.sha256(Path(model_path).read_bytes()).hexdigest()
+            scorer = kenlm.Model(str(model_path))
+        except (ImportError, OSError, ValueError, RuntimeError) as exc:
+            model_hash = None
+            notes.append('KenLM scoring unavailable; using dictionary rules: ' + str(exc))
+    else:
+        notes.append('KenLM scoring inactive: no character language model configured')
+    return tokenizer, frequencies, provenance, scorer, model_hash, notes
+
+
 def sentence_context(text, start, end):
     spans = [(match.start(), match.end()) for match in re.finditer(r'[^。！？\n]+[。！？\n]*|[。！？\n]+', text)]
     selected = [i for i, (left, right) in enumerate(spans) if left < end and start < right]
@@ -172,22 +194,14 @@ def scan(args):
     words = set(rules.get('words', []))
     protected = set(rules.get('protected', []))
     confusions = rules.get('confusions', {})
-    tokenizer, frequencies, provenance = None, {}, None
-    if args.lexicon == 'jieba':
-        tokenizer, frequencies, provenance = jieba_resources()
-        words.update(word for word in frequencies if len(word) >= 2)
+    tokenizer, frequencies, provenance, scorer, model_hash, notes = load_enhancements(
+        args.lexicon, args.language_model)
+    words.update(word for word in frequencies if len(word) >= 2)
     word_index, protected_index = WordIndex(words), WordIndex(protected)
-    scorer = None
-    if args.language_model:
-        try:
-            import kenlm
-        except ImportError as exc:
-            raise ValueError('Install kenlm to use --language-model') from exc
-        scorer = kenlm.Model(args.language_model)
     source = Path(args.input).read_bytes()
     fingerprint = hashlib.sha256(source).hexdigest()
     configuration = {'rules': rules, 'version': VERSION, 'lexicon': provenance, 'score_gain': args.score_gain,
-                     'language_model': hashlib.sha256(Path(args.language_model).read_bytes()).hexdigest() if args.language_model else None}
+                     'language_model': model_hash}
     rules_hash = digest(json.dumps(configuration, sort_keys=True, ensure_ascii=False))
     output = Path(args.job)
     if output.exists():
@@ -272,13 +286,14 @@ def scan(args):
            'characters_scanned': sum(len(row[2]) for row in rows),
            'exemptions': exemptions, 'exemptions_log': exemptions_log, 'lexicon': provenance,
            'protected_evidence': rules.get('protected_evidence', {}),
+           'enhancements': {'lexicon': 'jieba' if tokenizer else 'starter',
+                            'kenlm_scoring': scorer is not None, 'notes': notes},
            'coverage': {'uncovered_text': 0, 'reading_documents': len(set(row[0] for row in rows)),
                         'blocks': 'p, h1-h6, li; nested blocks deduplicated'},
            'seconds': time.monotonic() - started, 'candidates': candidates}
     if args.terms:
-        if tokenizer is None:
-            raise ValueError('--terms requires --lexicon jieba')
-        save(args.terms, discover_terms(rows, tokenizer, frequencies, provenance))
+        save(args.terms, discover_terms(rows, tokenizer, frequencies, provenance) if tokenizer else
+             {'candidates': [], 'note': 'Book-term discovery requires Jieba; spelling scan completed'})
     save(output, job)
     ebook.report(summary(job))
 
@@ -337,6 +352,7 @@ def summary(job):
         counts[candidate['status']] = counts.get(candidate['status'], 0) + 1
     return {'paragraphs_scanned': job['paragraphs_scanned'], 'characters_scanned': job['characters_scanned'],
             'exemptions': job['exemptions'], 'groups': len(candidate_groups(job)), 'candidates': len(job['candidates']), 'statuses': counts,
+            'enhancements': job.get('enhancements', {}),
             'scope': 'Dictionary and character heuristics; unflagged text has not received semantic review'}
 
 
@@ -496,9 +512,10 @@ def register(sub, core):
     parser.add_argument('--job', required=True)
     parser.add_argument('--dictionary', default=default)
     parser.add_argument('--book-dictionary')
-    parser.add_argument('--lexicon', choices=['starter', 'jieba'], default='starter')
+    parser.add_argument('--lexicon', choices=['auto', 'starter', 'jieba'], default='auto')
     parser.add_argument('--terms', help='Save repeated unknown terms for book dictionary review')
-    parser.add_argument('--language-model', help='Optional local character KenLM model')
+    parser.add_argument('--language-model', default=os.environ.get('EBOOK_WORKSHOP_KENLM_MODEL'),
+                        help='Character KenLM model; defaults to EBOOK_WORKSHOP_KENLM_MODEL')
     parser.add_argument('--score-gain', type=float, default=2.0)
     parser.set_defaults(run=scan)
     parser = sub.add_parser('proofread-review', help='Export bounded review packets or import decisions')

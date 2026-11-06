@@ -5,12 +5,11 @@
 ## 1. 扫描
 
 ```sh
-python3 -m pip install -r requirements-proofread.in
-python3 scripts/ebook.py proofread 原书.epub --lexicon jieba \
+python3 scripts/ebook.py proofread 原书.epub \
   --job work/校对.json --terms work/词语候选.json
 ```
 
-Jieba 提供通用词库；不安装也能使用内置小词表试跑。扫描包括标题、正文和列表脚注。任务保存已有进度，换底本或词典后用新的任务文件。
+Agent 按 Skill 自动安装并加载可选增强。默认尝试 Jieba 大词库，失败则使用内置词表；可用 `--lexicon starter` 明确选择基础模式。KenLM 有可用字符模型时自动按 `EBOOK_WORKSHOP_KENLM_MODEL` 加载，也可用 `--language-model 路径` 指定。没有可用模型时使用词典规则，不中断校对。扫描包括标题、正文和列表脚注。任务保存已有进度，换底本或词典后用新的任务文件。
 
 重复用语多时，Agent 可从词语候选中确认专名或正常用语，保存为本书词典，再加 `--book-dictionary work/本书词典.json` 重扫：
 

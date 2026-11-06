@@ -28,7 +28,7 @@ class ProofreadTests(unittest.TestCase):
         return json.loads(result.stdout) if ok else result.stderr
 
     def scan(self, *args):
-        return self.run_cli('proofread', self.book, '--job', self.job, *args)
+        return self.run_cli('proofread', self.book, '--job', self.job, '--lexicon', 'starter', *args)
 
     def read_job(self):
         return json.loads(self.job.read_text())
@@ -290,6 +290,59 @@ class ProofreadTests(unittest.TestCase):
         self.job.write_text(json.dumps(data))
         self.assertIn('increase --budget', self.run_cli('proofread-review', '--job', self.job,
                       '--packet', self.root / 'packet.json', '--budget', 1200, ok=False))
+
+    def test_missing_language_model_degrades_and_terms_still_export(self):
+        terms = self.root / 'terms.json'
+        self.scan('--language-model', self.root / 'missing.klm', '--terms', terms)
+        self.assertFalse(self.read_job()['enhancements']['kenlm_scoring'])
+        self.assertTrue(any(c['old'] == '千活' for c in self.read_job()['candidates']))
+        self.assertEqual(json.loads(terms.read_text())['candidates'], [])
+
+    def test_default_automatically_loads_jieba_when_available(self):
+        try:
+            import jieba
+        except ImportError:
+            self.skipTest('Optional Jieba not installed')
+        self.run_cli('proofread', self.book, '--job', self.job)
+        self.assertEqual(self.read_job()['enhancements']['lexicon'], 'jieba')
+
+    def test_real_kenlm_model_loads_when_installed(self):
+        try:
+            import kenlm
+        except ImportError:
+            self.skipTest('Optional KenLM not installed')
+        model = self.root / 'fixture.arpa'
+        model.write_text("\\data\\\nngram 1=5\nngram 2=3\n\n"
+                         "\\1-grams:\n-1\t<unk>\t0\n-1\t<s>\t0\n-1\t</s>\t0\n"
+                         "-1\t干\t0\n-1\t活\t0\n\n\\2-grams:\n"
+                         "-0.1\t<s> 干\n-0.1\t干 活\n-0.1\t活 </s>\n\n\\end\\\n",
+                         encoding='utf-8')
+        self.scan('--language-model', model)
+        self.assertTrue(self.read_job()['enhancements']['kenlm_scoring'])
+
+    def test_optional_loader_fallback_and_scoring(self):
+        import importlib.util
+        from unittest.mock import patch, Mock
+        spec = importlib.util.spec_from_file_location('proofread_optional', ROOT / 'scripts/proofread.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with patch.object(module, 'jieba_resources', side_effect=ImportError('missing')):
+            result = module.load_enhancements('auto', None)
+            self.assertIsNone(result[0])
+            self.assertIn('starter', result[-1][0])
+        model = self.root / 'model.klm'
+        model.write_bytes(b'fixture')
+        with patch.dict(sys.modules, {'kenlm': None}):
+            self.assertIsNone(module.load_enhancements('starter', model)[3])
+        backend = Mock()
+        with patch.dict(sys.modules, {'kenlm': backend}):
+            result = module.load_enhancements('starter', model)
+            self.assertIs(result[3], backend.Model.return_value)
+            self.assertIsNotNone(result[4])
+            backend.Model.side_effect = RuntimeError('invalid model')
+            result = module.load_enhancements('starter', model)
+            self.assertIsNone(result[3])
+            self.assertIsNone(result[4])
 
     def test_report_omits_normal_content(self):
         self.scan()
