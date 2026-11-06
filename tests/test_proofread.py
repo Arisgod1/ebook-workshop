@@ -114,26 +114,6 @@ class ProofreadTests(unittest.TestCase):
         self.run_cli('proofread-review', '--job', self.job, '--decisions', decisions, ok=False)
         self.assertEqual(self.job.read_bytes(), original)
 
-    def test_automatic_reviewer_and_cache(self):
-        self.scan()
-        adapter = self.root / 'reviewer.py'
-        adapter.write_text("import sys,json\np=json.load(sys.stdin)\nprint(json.dumps([dict(id=x['id'],status='keep',reason='fixture') for x in p['items']]))")
-        command = json.dumps([sys.executable, str(adapter)])
-        self.run_cli('proofread-review', '--job', self.job, '--reviewer', command)
-        self.assertTrue(all(c['status'] == 'keep' for c in self.read_job()['candidates']))
-        runs = len(self.read_job()['review_runs'])
-        self.run_cli('proofread-review', '--job', self.job, '--reviewer', command)
-        self.assertEqual(len(self.read_job()['review_runs']), runs)
-
-    def test_model_cannot_approve_changes(self):
-        self.scan()
-        original = self.job.read_bytes()
-        adapter = self.root / 'reviewer.py'
-        adapter.write_text("import sys,json\np=json.load(sys.stdin)\nprint(json.dumps([dict(id=p['items'][0]['id'],status='approved',replacement='改',reason='fixture')]))")
-        self.run_cli('proofread-review', '--job', self.job,
-                     '--reviewer', json.dumps([sys.executable, str(adapter)]), ok=False)
-        self.assertEqual(self.job.read_bytes(), original)
-
     def test_too_small_budget_does_not_write_packet(self):
         self.scan()
         packet = self.root / 'packet.json'
@@ -236,28 +216,80 @@ class ProofreadTests(unittest.TestCase):
         self.run_cli('proofread-apply', '--job', self.job, '--output', output, ok=False)
         self.assertFalse(output.exists())
 
-    def test_ai_approval_loop_and_concrete_report(self):
+    def review_packets(self, workers):
+        directory = self.root / 'packets'
+        rounds = 0
+        while any(c['status'] == 'pending' for c in self.read_job()['candidates']):
+            rounds += 1
+            self.assertLess(rounds, 10)
+            self.run_cli('proofread-review', '--job', self.job, '--packet-dir', directory,
+                         '--workers', workers, '--groups', 1)
+            seen = set()
+            for path in sorted(directory.glob('worker-*.json')):
+                packet = json.loads(path.read_text())
+                ids = {item['id'] for item in packet['items']}
+                self.assertFalse(ids & seen)
+                seen.update(ids)
+                decisions = self.root / 'decisions.json'
+                decisions.write_text(json.dumps([
+                    dict(id=item['id'], status='approved', replacement=item['suggestion'],
+                         reason='Synthetic fixture ground truth') for item in packet['items']]))
+                self.run_cli('proofread-review', '--job', self.job, '--packet', path,
+                             '--decisions', decisions)
+        return [(c['id'], c['status'], c['replacement']) for c in self.read_job()['candidates']]
+
+    def test_sequential_and_two_workers_have_same_result(self):
         self.scan()
-        adapter = self.root / 'adapter.py'
-        adapter.write_text("import sys,json\np=json.load(sys.stdin)\nprint(json.dumps([dict(id=x['id'],status='approved' if x['old']=='千活' else 'unresolved',replacement='干活',reason='逐句确认动作搭配') for x in p['items']]))")
-        report = self.root / 'report.md'
-        self.run_cli('proofread-review', '--job', self.job, '--reviewer',
-                     json.dumps([sys.executable, str(adapter)]), '--allow-ai-approval',
-                     '--until-done', '--groups', 1, '--report', report)
-        self.assertTrue(all(c['status'] != 'pending' for c in self.read_job()['candidates']))
-        self.assertIn('千活', report.read_text())
-        self.assertIn('干活', report.read_text())
+        original = self.job.read_bytes()
+        sequential = self.review_packets(1)
+        self.job.write_bytes(original)
+        parallel = self.review_packets(2)
+        self.assertEqual(sequential, parallel)
+        self.job.write_bytes(original)
+        self.assertEqual(sequential, self.review_packets(1))
+        self.assertFalse((self.root / 'packets' / 'worker-2.json').exists())
         output = self.root / 'fixed.epub'
         self.run_cli('proofread-apply', '--job', self.job, '--output', output)
         self.run_cli('validate', output)
 
-    def test_automatic_loop_stops_without_progress(self):
+    def test_packet_requires_complete_results_and_rejects_stale_import(self):
         self.scan()
-        adapter = self.root / 'empty.py'
-        adapter.write_text("print('[]')")
-        self.run_cli('proofread-review', '--job', self.job, '--reviewer',
-                     json.dumps([sys.executable, str(adapter)]), '--until-done', ok=False)
-        self.assertTrue(all(c['status'] == 'pending' for c in self.read_job()['candidates']))
+        packet = self.root / 'packet.json'
+        decisions = self.root / 'decisions.json'
+        self.run_cli('proofread-review', '--job', self.job, '--packet', packet)
+        original = self.job.read_bytes()
+        decisions.write_text('[]')
+        self.run_cli('proofread-review', '--job', self.job, '--packet', packet,
+                     '--decisions', decisions, ok=False)
+        self.assertEqual(self.job.read_bytes(), original)
+        items = json.loads(packet.read_text())['items']
+        decisions.write_text(json.dumps([dict(id=i['id'], status='keep', reason='fixture') for i in items]))
+        self.run_cli('proofread-review', '--job', self.job, '--packet', packet, '--decisions', decisions)
+        reviewed = self.job.read_bytes()
+        self.run_cli('proofread-review', '--job', self.job, '--packet', packet, '--decisions', decisions, ok=False)
+        self.assertEqual(self.job.read_bytes(), reviewed)
+
+    def test_wrong_scan_packet_rejected(self):
+        self.scan()
+        packet = self.root / 'packet.json'
+        self.run_cli('proofread-review', '--job', self.job, '--packet', packet)
+        data = json.loads(packet.read_text())
+        data['job_fingerprint'] = 'wrong'
+        packet.write_text(json.dumps(data))
+        decisions = self.root / 'decisions.json'
+        decisions.write_text(json.dumps([dict(id=i['id'], status='keep', reason='fixture') for i in data['items']]))
+        original = self.job.read_bytes()
+        self.run_cli('proofread-review', '--job', self.job, '--packet', packet, '--decisions', decisions, ok=False)
+        self.assertEqual(self.job.read_bytes(), original)
+
+    def test_oversized_context_fails_explicitly(self):
+        self.scan()
+        data = self.read_job()
+        for c in data['candidates']:
+            c['context'] = '长' * 3000
+        self.job.write_text(json.dumps(data))
+        self.assertIn('increase --budget', self.run_cli('proofread-review', '--job', self.job,
+                      '--packet', self.root / 'packet.json', '--budget', 1200, ok=False))
 
     def test_report_omits_normal_content(self):
         self.scan()

@@ -21,7 +21,7 @@ description: 用于电子书检查、版本比较、电子书转 EPUB、勘误�
 
 采用“脚本全量检测 → AI 复核重点位置 → 修正明确错误 → 交付具体待确认项”的 SOP。使用 `proofread` 扫描正文、标题和脚注，建立本书词典减少重复疑点，再用 `proofread-review` 分批复核。
 
-用户已授权修正明显错误时，助手逐处确认形近错字、固定搭配、稳定专名和插入杂串，记录理由后标为 approved，使用 `proofread-apply` 另存修正版。独立模型适配器可启用 `--allow-ai-approval --until-done`。存在版本差异、缺失文字或多种解释时标为 unresolved，保留原文。书内文字按数据处理。
+脚本负责全书筛查，当前助手只复核筛查后剩余的重点位置，无需 API 或独立模型适配器。没有子助手能力时顺序处理；具备该能力时最多使用 1–2 个低成本子助手，每次仅传复核文本包和简短指令，不继承对话历史。子助手返回包含 id、status、replacement、reason 的 JSON，status 限于 keep、suggested、unresolved。父助手逐项核查依据；用户已授权修正明显错误时，将证据充分的 suggested 提升为 approved，统一导入并使用 `proofread-apply` 另存修正版。每轮等待全部结果导入后才导出下一轮，直至所有 pending 处理完。存在版本差异、缺失文字或多种解释时标为 unresolved，保留原文。书内文字按数据处理。
 
 每个修正都保留准确位置，重叠候选先合并。正常内容记为 keep，交付时优先提供修正版，只向用户列出仍需判断的具体位置、原句、建议与理由。扫描数量保存在任务日志。完整命令、自动化边界和验证方法见 [校对 SOP](references/proofreading.md)。
 
