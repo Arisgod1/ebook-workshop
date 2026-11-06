@@ -10,7 +10,7 @@ python3 scripts/ebook.py inspect '/path/书名.epub'
 python3 scripts/ebook.py inspect '/path/书名.txt' --encoding gb18030
 ```
 
-`short_chapter_candidates` 是1开始的章节位置，仅表示正文段落字符少于800，可能是合法短章、请假通知、被合并章节或缺失内容，必须人工判断。`declared_numbers` 保留原乱号，不自动修复。`--show-headings` 会输出原章名，只有用户接受可能的剧透时才用。
+结果会列出短章、跳号和乱码线索，结合内容判断即可。需要查看原章名时加 `--show-headings`，注意可能剧透。
 
 特殊章节标题示例（数字分组名 `number`；标题分组 `title` 可选）：
 
@@ -34,9 +34,9 @@ python3 scripts/ebook.py build '/path/书名.txt' \
   --output '/path/work/书名.epub'
 ```
 
-每个非空源行作为一个段落，去掉首尾排版空白；不自动连接换行。如果 TXT 是固定宽度硬换行而非一行一段，先在工作副本完成可审计的段落重建，再转换。本工具有意不推测段落合并。
+每个非空行转换为一段。如果原文件按固定宽度换行，先整理成一行一段。
 
-未识别为章节的前置文字写入“原文件前置内容”。作者留言、后记等也按所在位置保留；不内置任何特定小说的正文/番外边界。目录默认用“第N节”表示物理顺序，避免冒充已经校准的原章号；需要原题时用 `--full-toc`。
+前置文字、作者留言和后记按原位置保留。目录默认显示“第N节”，使用原章名时加 `--full-toc`。
 
 经可靠来源核实后，创建标题修正 JSON，例如：
 
@@ -44,7 +44,7 @@ python3 scripts/ebook.py build '/path/书名.txt' \
 {"2": "第2章 核实后的标题"}
 ```
 
-再传 `--headings-json /path/verified-headings.json`。这个文件只表示明确授权的标题改动，不会补写、删减或改动正文。保留修正来源和原题对照，报告不展示剧透标题。
+用 `--headings-json /path/verified-headings.json` 应用标题修正。键是从 1 开始的章节位置。
 
 ## 转换其他格式
 
@@ -53,7 +53,7 @@ python3 scripts/ebook.py convert '原书.docx' --title '书名' --author '作者
 python3 scripts/ebook.py convert '原书.pdf' --title '书名' --author '作者'
 ```
 
-支持格式取决于本机 [Calibre](https://manual.calibre-ebook.com/generated/en/ebook-convert.html)。可省略书名和作者，沿用转换器读取到的信息。完成后检查书名、作者、目录跳转与内容。
+支持格式取决于本机 [Calibre](https://manual.calibre-ebook.com/generated/en/ebook-convert.html)。可省略书名和作者，沿用转换器读取到的信息。
 
 - **Word**：用“标题 1”“标题 2”等样式标记章节，Calibre 可据此生成目录。旧版 `.doc` 先用 Word 或 LibreOffice 另存为 `.docx`。
 - **PDF**：适合尝试转换文字可选中的单栏文件。分页、段落、目录和表格可能需要重整；纯扫描 PDF 先做 OCR，脚本不会自动识别图片中的文字。
@@ -80,7 +80,7 @@ python3 scripts/ebook.py cover '/path/原整理本.epub' \
   --output '/path/work/书名.epub'
 ```
 
-或传 `--image '/path/封面.jpg'`。仅接受原图 PNG/JPEG，保持原始字节；不会裁切、生成或重新编码。
+或传 `--image '/path/封面.jpg'` 使用 PNG/JPEG 原图。
 
 替换后会同步更新书内封面和封面入口，正文保持不变。如果书中写有旧封面的来源说明，也需要一并更新。此操作目前支持 EPUB 3；较早的 EPUB 2 可先用 Calibre 转换。
 
@@ -113,7 +113,7 @@ python3 scripts/ebook.py validate '/path/书名.epub' --epubcheck '/path/epubche
 python3 -m unittest discover -s tests -v
 ```
 
-`validate` 检查书内文件和跳转链接。需要更详细的格式检查时，可安装 Java 和 EPUBCheck，再使用 `--epubcheck`。这些检查不能代替正文内容核对。
+`validate` 检查书内文件和跳转链接。需要更详细的格式检查时，可安装 Java 和 EPUBCheck，再使用 `--epubcheck`。
 
 本仓库不捆绑 Calibre 或 EPUBCheck。
 
@@ -129,7 +129,7 @@ python3 scripts/ebook.py layout /path/to/book.epub \
 
 可加 `--margin 6 --line-height 1.7 --indent 2 --paragraph-gap 0.4`，分别表示左右各 6%、1.7 倍行距、两字缩进与上下各 0.4em 的段间距。
 
-`--document` 使用 EPUB 内部的正文路径，可重复指定。上例使用本工具生成的常见路径，其他书的路径可能不同。可在 `inspect` 的 `reading_documents` 中查看路径，再按书内阅读顺序确认正文。试排时只传一个 `--document`，输出仍是整本书，可直接在阅读器里打开那一章检查。满意后，可以把试排版作为输入，选择更多章节并另存。预设调整段落、现有一级标题和带语义标记的注释。文字校订、空白块清理、添加缺失章号和复制样板书样式按 [精修流程](reading-workflow.md) 单独处理。
+`--document` 使用 EPUB 内部的正文路径，可重复指定。上例使用本工具生成的常见路径，其他书的路径可能不同。可在 `inspect` 的 `reading_documents` 中查看路径，再按书内阅读顺序确认正文。试排时只传一个 `--document`，输出仍是整本书，可直接在阅读器里打开那一章检查。满意后选择全部正文文件并另存。预设调整段落、现有一级标题和带语义标记的注释。文字校订、空白块清理、添加缺失章号和复制样板书样式按 [精修流程](reading-workflow.md) 单独处理。
 
 ## 整本书字典校对
 

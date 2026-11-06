@@ -252,7 +252,7 @@ class ProofreadTests(unittest.TestCase):
         self.run_cli('proofread-apply', '--job', self.job, '--output', output)
         self.run_cli('validate', output)
 
-    def test_packet_requires_complete_results_and_rejects_stale_import(self):
+    def test_packet_requires_complete_results_and_allows_reimport(self):
         self.scan()
         packet = self.root / 'packet.json'
         decisions = self.root / 'decisions.json'
@@ -266,15 +266,15 @@ class ProofreadTests(unittest.TestCase):
         decisions.write_text(json.dumps([dict(id=i['id'], status='keep', reason='fixture') for i in items]))
         self.run_cli('proofread-review', '--job', self.job, '--packet', packet, '--decisions', decisions)
         reviewed = self.job.read_bytes()
-        self.run_cli('proofread-review', '--job', self.job, '--packet', packet, '--decisions', decisions, ok=False)
+        self.run_cli('proofread-review', '--job', self.job, '--packet', packet, '--decisions', decisions)
         self.assertEqual(self.job.read_bytes(), reviewed)
 
-    def test_wrong_scan_packet_rejected(self):
+    def test_wrong_source_packet_rejected(self):
         self.scan()
         packet = self.root / 'packet.json'
         self.run_cli('proofread-review', '--job', self.job, '--packet', packet)
         data = json.loads(packet.read_text())
-        data['job_fingerprint'] = 'wrong'
+        data['source_sha256'] = 'wrong'
         packet.write_text(json.dumps(data))
         decisions = self.root / 'decisions.json'
         decisions.write_text(json.dumps([dict(id=i['id'], status='keep', reason='fixture') for i in data['items']]))

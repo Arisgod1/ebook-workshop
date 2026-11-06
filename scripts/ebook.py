@@ -366,6 +366,19 @@ def output_for(args, title, extension='.epub'):
     return str(Path(args.input).parent / '整理后' / (safe + extension))
 
 
+def apply_text_edits(changes):
+    """Apply node-local edits from right to left, rejecting overlaps."""
+    for (element, field), replacements in changes.items():
+        value = getattr(element, field)
+        limit = len(value)
+        for start, end, new in sorted(replacements, reverse=True):
+            if end > limit:
+                raise ValueError('Corrections overlap')
+            value = value[:start] + new + value[end:]
+            limit = start
+        setattr(element, field, value)
+
+
 def correct(args):
     files, opf, package = load(args.input)
     _, spine = inventory(files, opf, package)
@@ -401,15 +414,7 @@ def correct(args):
             raise ValueError(f'Correction #{index}: expected one match in a single text node, found {len(matches)}')
         element, field, start = matches[0]
         pending.setdefault((element, field), []).append((start, start+len(old), new))
-    for (element, field), replacements in pending.items():
-        value = getattr(element, field)
-        limit = len(value)
-        for start, end, new in sorted(replacements, reverse=True):
-            if end > limit:
-                raise ValueError('Corrections overlap')
-            value = value[:start] + new + value[end:]
-            limit = start
-        setattr(element, field, value)
+    apply_text_edits(pending)
     for path, root in roots.items():
         files[path] = dump(root)
     args.output = output_for(args, book_title(package))
