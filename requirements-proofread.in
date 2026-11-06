@@ -1,3 +1,2 @@
-# Optional enhancements. Agent installs each separately so either may fail.
-jieba==0.42.1
-kenlm
+# Optional enhancement. Agent installs it; if it fails, the starter dictionary still works.
+jieba>=0.42

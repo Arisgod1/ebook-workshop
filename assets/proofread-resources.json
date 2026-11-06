@@ -1,10 +1,16 @@
 {
   "jieba": {
-    "version": "0.42.1",
-    "dictionary_sha256": "7197c3211ddd98962b036cdf40324d1ea2bfaa12bd028e68faa70111a88e12a8",
     "source": "https://github.com/fxsjy/jieba/tree/v0.42.1",
     "license": "MIT",
     "license_url": "https://github.com/fxsjy/jieba/blob/v0.42.1/LICENSE",
-    "installation": "python3 -m pip install -r requirements-proofread.in"
+    "installation": "python3 -m pip install -r requirements-proofread.in",
+    "note": "Any installed Jieba version is used as-is. The dictionary actually loaded is recorded in the task file for traceability, not compared against a fixed hash."
+  },
+  "variants": {
+    "file": "assets/proofread-variants.json",
+    "source": "OpenCC 常见繁体转简体单字表，另补异体字与日文字形",
+    "license": "Apache-2.0",
+    "license_url": "https://github.com/BYVoid/OpenCC/blob/master/LICENSE",
+    "note": "字形对照，不含语义判断。简体正文中出现表内字符时提示改用规范写法。"
   }
 }

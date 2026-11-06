@@ -1,6 +1,6 @@
 # 命令参考（自行操作时使用）
 
-基础依赖为 Python 3.9+。默认可选增强包括 Jieba（更大词库）和 KenLM（字符语言模型打分），由 Agent 自动尝试安装和加载，失败时降级继续。KenLM 需另有模型文件。脚本路径相对 skill 根目录。转换其他格式或生成 AZW3 需安装 Calibre。省略 `--output` 时默认保存到输入旁的 `整理后/书名.epub`（USB 为 `.azw3`）。已有同名文件时请另选输出路径。不自动访问网络、不查找或下载书籍、不发送邮件。
+基础依赖为 Python 3.9+。Jieba 大词库由 Agent 自动尝试安装，失败时降级继续。脚本路径相对 skill 根目录。转换其他格式或生成 AZW3 需安装 Calibre。省略 `--output` 时默认保存到输入旁的 `整理后/书名.epub`（USB 为 `.azw3`）。已有同名文件时请另选输出路径。不自动访问网络、不查找或下载书籍、不发送邮件。
 
 ## 无剧透检查
 
@@ -110,7 +110,7 @@ python3 scripts/ebook.py paginate '/path/无页码.epub' \
 ```bash
 python3 scripts/ebook.py validate '/path/书名.epub'
 python3 scripts/ebook.py validate '/path/书名.epub' --epubcheck '/path/epubcheck.jar'
-python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -t . -v
 ```
 
 `validate` 检查书内文件和跳转链接。需要更详细的格式检查时，可安装 Java 和 EPUBCheck，再使用 `--epubcheck`。
@@ -134,3 +134,26 @@ python3 scripts/ebook.py layout /path/to/book.epub \
 ## 整本书字典校对
 
 可用 `proofread` 扫描疑点、`proofread-review` 分批复核、`proofread-apply` 应用已确认勘误。详见 [校对流程](proofreading.md)。
+
+## 代码结构
+
+命令都从 `scripts/ebook.py` 进入，内部按功能拆分：
+
+```
+scripts/
+  ebook.py              命令行入口，只做参数解析和调度
+  workshop/
+    epub.py             EPUB 容器读写、校验、封面资源定位
+    text.py             文本编码识别、章节切分、杂音规则
+    render.py           书内页面生成与封面替换
+    inspect_cmd.py      检查与比较
+    build_cmd.py        TXT→EPUB 与 Calibre 转换
+    correct_cmd.py      应用已核实的勘误
+    cover_cmd.py        更换封面
+    layout_cmd.py       排版预设
+    pages_cmd.py        估算页码与 Kindle 准备
+    proofread_cmd.py    校对扫描、复核包、写入
+    validate_cmd.py     结构校验
+```
+
+新增命令时在 `workshop/` 下建一个 `*_cmd.py`，实现 `register(sub)` 注册子命令即可，无需改动入口文件。
