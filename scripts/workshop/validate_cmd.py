@@ -1,6 +1,7 @@
 """校验：检查书内文件、跳转和目录是否完整。"""
 import subprocess
 import zipfile
+from pathlib import Path
 
 from . import epub
 
@@ -15,7 +16,14 @@ def validate(args):
             raise ValueError('mimetype must be first, uncompressed, without extra ZIP fields')
     result['structural_validation'] = 'passed (not a substitute for EPUBCheck)'
     if args.epubcheck:
-        completed = subprocess.run(['java', '-jar', args.epubcheck, args.input], capture_output=True, text=True)
+        if not Path(args.epubcheck).is_file():
+            raise ValueError('EPUBCheck jar not found: ' + args.epubcheck)
+        try:
+            completed = subprocess.run(['java', '-jar', args.epubcheck, args.input],
+                                       capture_output=True, text=True)
+        except FileNotFoundError as error:
+            # 没装 Java 时给一句能看懂的提示，而不是堆栈。
+            raise ValueError('Java is required for EPUBCheck; install a JRE or run without --epubcheck') from error
         result['epubcheck_exit_code'] = completed.returncode
         result['epubcheck_output'] = completed.stdout + completed.stderr
         epub.report(result)

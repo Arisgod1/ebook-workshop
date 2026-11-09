@@ -1,9 +1,9 @@
 """EPUB container primitives: read, inspect and write the archive without changing the text."""
+import html.entities
 import json
 import os
 import posixpath
 import re
-import struct
 import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
@@ -28,10 +28,49 @@ def q(ns, name):
     return '{' + ns + '}' + name
 
 
+def default_file_mode():
+    """新建文件应有的权限：0666 扣掉 umask。"""
+    mask = os.umask(0)
+    os.umask(mask)
+    return 0o666 & ~mask
+
+
+# XHTML 里常见的 HTML 实体，XML 解析器不认（它们只在 HTML 里定义）。
+# 有些书直接写 &nbsp; 却没有声明 DTD，转换管线会先展开它们再解析。
+_HTML_ENTITY = re.compile(rb'&([a-zA-Z][a-zA-Z0-9]{1,31});')
+
+# XML 自带的五个实体：展开它们会破坏 XML，必须原样留着。
+_XML_ENTITIES = {'amp', 'lt', 'gt', 'quot', 'apos'}
+
+
+def _expand_html_entities(data):
+    """把 HTML 实体换成字符，让 XML 解析器能读。
+
+    只展开 XML 不认识的那些：&amp; 展成裸 & 会让整份文档变非法。
+    """
+    def replace(match):
+        name = match.group(1).decode('ascii')
+        if name in _XML_ENTITIES:
+            return match.group(0)
+        char = html.entities.html5.get(name + ';')
+        if char is None:
+            return match.group(0)
+        # 换出来的字符本身可能是 & 或 <，要重新转义。
+        return char.replace('&', '&amp;').replace('<', '&lt;').encode('utf-8')
+    return _HTML_ENTITY.sub(replace, data)
+
+
 def xml(data):
     if re.search(br'<!\s*(ENTITY|DOCTYPE[^>]*\[)', data, re.I):
         raise ValueError('XML entity declarations are not supported')
-    return ET.fromstring(data)
+    try:
+        return ET.fromstring(data)
+    except ET.ParseError:
+        # 未声明的 HTML 实体：展开后再试一次。
+        expanded = _expand_html_entities(data)
+        if expanded == data:
+            raise
+        return ET.fromstring(expanded)
 
 
 def dump(root):
@@ -57,8 +96,15 @@ def load(path):
         files = {name: archive.read(name) for name in names if not name.endswith('/')}
     if files.get('mimetype') != b'application/epub+zip':
         raise ValueError('Missing/incorrect EPUB mimetype')
-    container = xml(files['META-INF/container.xml'])
-    opf = container.find('.//' + q(C, 'rootfile')).get('full-path')
+    container_data = files.get('META-INF/container.xml')
+    if container_data is None:
+        raise ValueError('Missing META-INF/container.xml; this is not a valid EPUB')
+    rootfile = xml(container_data).find('.//' + q(C, 'rootfile'))
+    if rootfile is None or not rootfile.get('full-path'):
+        raise ValueError('container.xml names no package document')
+    opf = rootfile.get('full-path')
+    if opf not in files:
+        raise ValueError('Package document is missing from the archive: ' + opf)
     package = xml(files[opf])
     if 'META-INF/encryption.xml' in files:
         raise ValueError('Encrypted resources present; inspect separately, do not remove encryption')
@@ -150,65 +196,69 @@ def write(files, output):
     with tempfile.NamedTemporaryFile(dir=output.parent, suffix='.epub', delete=False) as handle:
         temp = Path(handle.name)
     try:
+        # 临时文件默认 0600，改成普通新建文件该有的权限，
+        # 免得产出的电子书别人读不了。Windows 上没有 POSIX 权限位，跳过。
+        if os.name != 'nt':
+            os.chmod(str(temp), default_file_mode())
         with zipfile.ZipFile(temp, 'w') as archive:
             archive.writestr('mimetype', b'application/epub+zip', compress_type=zipfile.ZIP_STORED)
             for name, body in files.items():
                 if name != 'mimetype':
-                    archive.writestr(name, body, zipfile.ZIP_DEFLATED)
-        os.link(temp, output)
+                    archive.writestr(name, body, compress_type=zipfile.ZIP_DEFLATED)
+        _move_into_place(temp, output)
     finally:
         temp.unlink(missing_ok=True)
+
+
+def _move_into_place(temp, output):
+    """把临时文件放到目标位置，且不覆盖已存在的文件。
+
+    POSIX 上用硬链接：它不能覆盖已有目标，所以「不覆盖」的契约天然成立。
+    Windows 上硬链接要额外权限、也不总是可用，改用改名——先确认目标不存在，
+    存在就报错，避免默默覆盖别人的文件。
+    """
+    if os.name != 'nt':
+        os.link(str(temp), str(output))
+        return
+    if output.exists():
+        raise ValueError('Output exists; choose a new path (source files are never overwritten)')
+    os.replace(str(temp), str(output))
 
 
 def book_title(package):
     return (package.findtext('.//' + q(D, 'title')) or '').strip()
 
 
-def output_for(args, title, extension='.epub'):
-    """Default destination next to the source, named after the book."""
-    if args.output:
-        return args.output
-    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', title).strip(' .')
-    if not safe:
-        raise ValueError('No usable book title; specify --output')
-    return str(Path(args.input).parent / '整理后' / (safe + extension))
-
-
-def image_info(data):
-    """Read PNG or JPEG dimensions without re-encoding the image."""
-    if data.startswith(b'\x89PNG\r\n\x1a\n') and data[12:16] == b'IHDR':
-        width, height = struct.unpack('>II', data[16:24])
-        return 'image/png', 'png', width, height
-    if data.startswith(b'\xff\xd8'):
-        index = 2
-        while index < len(data):
-            if data[index] != 255:
-                index += 1
-                continue
-            while index < len(data) and data[index] == 255:
-                index += 1
-            marker = data[index]
-            index += 1
-            if marker in (0xD8, 0xD9, 0x01) or 0xD0 <= marker <= 0xD7:
-                continue
-            size = struct.unpack('>H', data[index:index + 2])[0]
-            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
-                height, width = struct.unpack('>HH', data[index + 3:index + 7])
-                return 'image/jpeg', 'jpg', width, height
-            if size < 2:
-                break
-            index += size
-    raise ValueError('Cover must be an intact PNG or JPEG (copy original bytes; no silent conversion)')
-
-
 def cover_item(package):
-    """The manifest item declared as the cover image, if there is one."""
+    """The manifest item declared as the cover image, if there is one.
+
+    三种常见标记都要认：manifest 的 cover-image 属性、
+    <meta name="cover">，以及 guide 里 type="cover" 的引用。
+    最后一种在 Sigil / 老书里很常见，它指向封面页而不是图片本身，
+    这里返回封面页的 manifest 项，由调用方顺着页里的 img 找图。
+    """
     items = package.findall('./' + q(O, 'manifest') + '/' + q(O, 'item'))
     for entry in items:
         if 'cover-image' in entry.get('properties', '').split():
             return entry
-    guide = next((e.get('content') for e in package.findall('.//' + q(O, 'meta')) if e.get('name') == 'cover'), None)
-    return next((entry for entry in items if entry.get('id') == guide), None)
+    meta = next((e.get('content') for e in package.findall('.//' + q(O, 'meta'))
+                 if e.get('name') == 'cover'), None)
+    if meta:
+        found = next((entry for entry in items if entry.get('id') == meta), None)
+        if found is not None:
+            return found
+    guide = package.find(q(O, 'guide'))
+    if guide is not None:
+        for reference in guide.findall(q(O, 'reference')):
+            if (reference.get('type') or '').lower() != 'cover':
+                continue
+            href = (reference.get('href') or '').partition('#')[0]
+            if not href:
+                continue
+            found = next((entry for entry in items if entry.get('href') == href), None)
+            if found is not None:
+                return found
+    return None
 
 
 def text_slots(element):

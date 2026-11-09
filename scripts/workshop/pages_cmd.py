@@ -2,18 +2,18 @@
 import posixpath
 import re
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
-from . import epub
+from . import epub, names
 from . import build_cmd
+from . import epub3
 
 
 def paginate(args):
     """Insert estimated page markers at paragraph boundaries and list them in the navigation."""
     if args.chars < 1:
         raise ValueError('--chars must be positive')
-    files, opf, package = epub.load(args.input)
-    if not package.get('version', '').startswith('3'):
-        raise ValueError('Pagination helper requires EPUB 3')
+    files, opf, package = epub3.load_epub3(args.input)
     items, spine = epub.inventory(files, opf, package)
     nav = next((epub.resolve(opf, e.get('href'))[0] for e in items.values()
                 if 'nav' in e.get('properties', '').split()), None)
@@ -91,7 +91,7 @@ def paginate(args):
             ET.SubElement(target, epub.q(epub.N, 'content'),
                           {'src': posixpath.relpath(path, posixpath.dirname(ncx)) + '#' + ident})
         files[ncx] = epub.dump(root)
-    args.output = epub.output_for(args, epub.book_title(package))
+    args.output = names.output_for(args, epub.book_title(package))
     epub.write(files, args.output)
     epub.report({'output': args.output, 'synthetic_pages': counter,
                  'target_nonwhite_characters_per_page': args.chars, 'documents_paginated': len(processed),
@@ -105,7 +105,12 @@ def kindle(args):
     if args.method == 'usb':
         if args.pages:
             raise ValueError('For USB, generate estimated pages in Calibre when sending to the device')
+        # AZW3 原生就能生成，不需要 Calibre。
+        # USB 方式约定产出 AZW3，--output 给的是路径，
+        # 扩展名不对时按 .azw3 改写，免得产出名不副实的文件。
         args.format, args.title, args.author = 'azw3', None, None
+        if args.output and Path(args.output).suffix.lower() != '.azw3':
+            args.output = str(Path(args.output).with_suffix('.azw3'))
         return build_cmd.convert(args)
     files, opf, package = epub.load(args.input)
     items, _ = epub.inventory(files, opf, package)
@@ -116,7 +121,7 @@ def kindle(args):
         if 'nav' in item.get('properties', '').split() or item.get('media-type') == 'application/x-dtbncx+xml')
     if args.pages and not has_pages:
         return paginate(args)
-    args.output = epub.output_for(args, epub.book_title(package))
+    args.output = names.output_for(args, epub.book_title(package))
     epub.write(files, args.output)
     epub.report({'output': args.output, 'existing_page_list_preserved': has_pages,
                  'next_step': 'Send EPUB via Send to Kindle; page display depends on Amazon conversion and the device'})

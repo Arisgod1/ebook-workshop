@@ -1,4 +1,6 @@
 """Kindle 准备：邮件传书可加估算页码，已有页码不会被覆盖。"""
+import struct
+
 from tests.support import Workspace, epub_entries, epub_text, run, run_failing
 
 
@@ -44,3 +46,24 @@ class KindleTests(Workspace):
         code, error = run_failing('kindle', book, '--method', 'usb', '--pages')
         self.assertEqual(code, 1)
         self.assertIn('Calibre', error)
+
+    def test_usb_delivery_produces_azw3(self):
+        """USB 传书产出 AZW3，且是有 MOBI 头的真文件。"""
+        book = self.build()
+        output = self.root / 'kindle.azw3'
+        report = run('kindle', book, '--method', 'usb', '--output', output)
+        self.assertEqual(report['format'], 'azw3')
+        self.assertTrue(output.is_file())
+        data = output.read_bytes()
+        self.assertEqual(data[60:68], b'BOOKMOBI')
+        record0 = data[struct.unpack('>L', data[78:82])[0]:]
+        self.assertEqual(record0[16:20], b'MOBI')
+        self.assertEqual(struct.unpack('>I', record0[36:40])[0], 8, '应该是 KF8')
+
+    def test_usb_delivery_rewrites_the_output_extension(self):
+        """输出路径写错了扩展名，也要按 USB 的约定产出 .azw3。"""
+        book = self.build()
+        wrong = self.root / 'kindle.epub'
+        run('kindle', book, '--method', 'usb', '--output', wrong)
+        self.assertFalse(wrong.exists(), '不该产出 .epub')
+        self.assertTrue(wrong.with_suffix('.azw3').is_file())

@@ -1,30 +1,23 @@
-"""生成书内页面：封面页、章节页，以及换封面时的资源替换。"""
+"""换封面：把指定图片装进书里，并让封面入口都指向它。"""
 import hashlib
-import html
 import posixpath
 import xml.etree.ElementTree as ET
 
-from . import epub
-
-CSS = '''body{font-family:serif;line-height:1.8;margin:0 5%;overflow-wrap:break-word}
-h1{font-size:1.5em;font-weight:normal;line-height:1.6;margin:2em 0 1.5em;text-align:center;break-after:avoid}
-p{text-indent:2em;margin:.5em 0;orphans:2;widows:2}nav ol{list-style:none;padding-left:1.2em}
-nav li{margin:.35em 0}a{color:inherit}.cover img{display:block;max-width:100%;max-height:95vh;width:auto;height:auto;margin:auto}
-.title{text-align:center;margin-top:20%}.title p{text-indent:0}.notice p{text-indent:0}
-'''
+from . import epub, names
+from .style import CSS
 
 
-def page(title, body):
-    """One XHTML document referencing the shared stylesheet."""
-    return ('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html xmlns="' + epub.H + '" xmlns:epub="'
-            + epub.EP + '" lang="zh-CN" xml:lang="zh-CN"><head><title>' + html.escape(title)
-            + '</title><meta charset="utf-8"/><link rel="stylesheet" href="style.css"/></head><body>'
-            + body + '</body></html>').encode()
+def _page(title, body):
+    """封面页本身。只是一张图，不借用正文的页面生成器。"""
+    return ('<?xml version="1.0" encoding="utf-8"?><!DOCTYPE html><html xmlns="' + epub.H
+            + '" xmlns:epub="' + epub.EP + '"><head><title>' + title
+            + '</title><meta charset="utf-8"/><link rel="stylesheet" href="style.css"/>'
+              '</head><body>' + body + '</body></html>').encode()
 
 
 def replace_cover(files, opf, package, data):
     """Point the book at a new cover image without touching the text."""
-    mime, ext, width, height = epub.image_info(data)
+    mime, ext, width, height = names.image_info(data)
     result = dict(files)
     base = posixpath.dirname(opf)
     # A distinct resource avoids rewriting existing references that might use the old cover elsewhere.
@@ -32,7 +25,7 @@ def replace_cover(files, opf, package, data):
     image_path = posixpath.join(base, stem + '.' + ext)
     document_path = posixpath.join(base, stem + '.xhtml')
     result[image_path] = data
-    result[document_path] = page('封面', '<section class="cover" epub:type="cover"><img src="' + stem + '.' + ext
+    result[document_path] = _page('封面', '<section class="cover" epub:type="cover"><img src="' + stem + '.' + ext
                                   + '" alt="封面" width="' + str(width) + '" height="' + str(height) + '"/></section>')
     # page() assumes stylesheet at the package root. Build provides it; imported books may not.
     if posixpath.join(base, 'style.css') not in result:

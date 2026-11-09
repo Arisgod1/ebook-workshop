@@ -1,10 +1,17 @@
-"""格式转换：借助 Calibre 把 Word、PDF 等转成 EPUB。"""
+"""格式转换：借助 Calibre 把 Word、PDF 等转成 EPUB。
+
+这个假 Calibre 是一段 sh 脚本，只能在类 Unix 系统上跑；
+Windows 上相关用例会跳过，原生转换的用例不受影响。
+"""
 import os
 import stat
 import tempfile
+import unittest
 from pathlib import Path
 
-from tests.support import Workspace, epub_text, run, run_failing
+from tests.support import Workspace, epub_entries, epub_text, run, run_failing
+
+POSIX_ONLY = unittest.skipIf(os.name == 'nt', 'fake ebook-convert is a sh script')
 
 
 class FakeCalibre:
@@ -18,13 +25,14 @@ class FakeCalibre:
             'case "$out" in\n'
             '  *.epub) cp "$FAKE_EPUB" "$out" ;;\n'
             '  *) printf "fake azw3" > "$out" ;;\n'
-            'esac\n')
+            'esac\n', encoding='utf-8')
         self.script.chmod(self.script.stat().st_mode | stat.S_IEXEC)
 
     def path(self):
         return str(self.script)
 
 
+@POSIX_ONLY
 class ConvertTests(Workspace):
     def setUp(self):
         super().setUp()
@@ -56,11 +64,17 @@ class ConvertTests(Workspace):
         run('convert', source, '--title', '示例书名', '--author', '测试作者', '--output', self.root / 'out.epub')
         self.assertEqual(source.read_bytes(), b'synthetic source')
 
-    def test_already_epub_is_not_converted_again(self):
-        """已经是 EPUB 的文件直接提示用其他命令。"""
-        code, error = run_failing('convert', self.converted, '--output', self.root / 'out.epub')
-        self.assertEqual(code, 1)
-        self.assertIn('already EPUB', error)
+    def test_epub_is_converted_natively(self):
+        """已经是 EPUB 的文件可以用原生管线重新整理，不需要 Calibre。"""
+        output = self.root / 'out.epub'
+        report = run('convert', self.converted, '--output', output,
+                     '--title', '新书名', '--author', '新作者')
+        self.assertEqual(report['engine'], 'native')
+        self.assertTrue(output.is_file())
+        entries = epub_entries(output)
+        self.assertIn('新书名', ''.join(
+            entries[name].decode('utf-8', 'replace')
+            for name in entries if name.endswith('.xhtml')))
 
     def test_legacy_doc_is_refused_with_advice(self):
         """旧版 .doc 先让用户在 Word 或 LibreOffice 里另存为 .docx。"""

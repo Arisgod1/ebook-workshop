@@ -6,7 +6,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import quote
 
-from . import epub
+from . import epub, names
+from . import epub3
 
 PRESET_PATH = Path(__file__).resolve().parents[2] / 'assets' / 'cn-novel.css'
 
@@ -37,9 +38,7 @@ def layout_style(args):
 
 def layout(args):
     """Apply the reading preset to selected chapters, leaving the words untouched."""
-    files, opf, package = epub.load(args.input)
-    if not package.get('version', '').startswith('3'):
-        raise ValueError('Layout preset requires EPUB 3')
+    files, opf, package = epub3.load_epub3(args.input)
     if any(meta.get('property') == 'rendition:layout' and (meta.text or '').strip() == 'pre-paginated'
            for meta in package.iter(epub.q(epub.O, 'meta'))) or any(
         'rendition:layout-pre-paginated' in ref.get('properties', '').split()
@@ -96,7 +95,7 @@ def layout(args):
         files[path] = epub.dump(root)
     files[style_path] = style
     files[opf] = epub.dump(package)
-    args.output = epub.output_for(args, epub.book_title(package))
+    args.output = names.output_for(args, epub.book_title(package))
     epub.write(files, args.output)
     epub.report({'output': args.output, 'preset': args.preset, 'documents': list(dict.fromkeys(args.document))})
 

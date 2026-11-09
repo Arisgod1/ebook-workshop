@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from . import epub
+from . import epub, names
 
 
 def correct(args):
@@ -37,7 +37,7 @@ def correct(args):
     epub.apply_text_edits(changes)
     for path, root in roots.items():
         files[path] = epub.dump(root)
-    args.output = epub.output_for(args, epub.book_title(package))
+    args.output = names.output_for(args, epub.book_title(package))
     epub.write(files, args.output)
     epub.report({'output': args.output, 'corrections_applied': len(edits)})
 

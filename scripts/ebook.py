@@ -25,7 +25,27 @@ def build_parser():
     return parser
 
 
+def _use_utf8_output():
+    """让中文输出在任何终端上都能打出来。
+
+    Windows 的控制台默认是 GBK/CP936，直接 print 中文会抛
+    UnicodeEncodeError，用户看到的是堆栈而不是结果。这里把标准输出
+    和错误输出都切成 UTF-8；命令行重定向到文件时同样适用。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, 'encoding', '') or '').lower()
+        if encoding.replace('-', '') in ('utf8', 'utf8sig'):
+            continue
+        reconfigure = getattr(stream, 'reconfigure', None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding='utf-8', errors='replace')
+            except (ValueError, OSError):
+                pass
+
+
 def main():
+    _use_utf8_output()
     parser = build_parser()
     args = parser.parse_args()
     if args.command == 'compare' and len(args.inputs) < 2:
