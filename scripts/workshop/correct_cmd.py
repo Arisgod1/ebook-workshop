@@ -25,11 +25,10 @@ def correct(args):
         if path not in roots:
             roots[path] = epub.xml(files[path])
         body = roots[path].find(epub.q(epub.H, 'body'))
-        matches = []
-        for paragraph in body.iter(epub.q(epub.H, 'p')) if body is not None else ():
-            if any(e.tag in {epub.q(epub.H, 'script'), epub.q(epub.H, 'style')} for e in paragraph.iter()):
-                continue
-            matches.extend(epub.find_text_positions(paragraph, old))
+        # 在整个 body 里找，不只是 <p>：错字同样可能出现在标题、列表项、
+        # 甚至直接排版在 div 里的正文里。只认 <p> 的话这些地方改不了。
+        skip = {epub.q(epub.H, 'script'), epub.q(epub.H, 'style')}
+        matches = epub.find_text_positions(body, old, skip) if body is not None else []
         if len(matches) != 1:
             raise ValueError(f'Correction #{index}: expected one match in a single text node, found {len(matches)}')
         element, field, start = matches[0]

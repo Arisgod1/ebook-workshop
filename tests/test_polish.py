@@ -67,10 +67,21 @@ class PolishTests(Workspace):
         self.assertEqual(report['corrections_applied'], 1)
         self.assertIn('编写', epub_text(output, 'OEBPS/c0001.xhtml'))
 
+    def test_correction_reaches_headings_and_lists_too(self):
+        """错字在标题里也要能改到，不能只认 <p>。"""
+        book = self.build()
+        edits = self.write_json('edits.json', [{'document': 'OEBPS/c0001.xhtml', 'old': '开篇', 'new': '序章'}])
+        output = self.root / 'heading.epub'
+        run('correct', book, '--edits', edits, '--output', output)
+        # 正文里的章节标题（h1）改到了；<title> 属于文档元信息，不在这里动。
+        text = epub_text(output, 'OEBPS/c0001.xhtml')
+        self.assertIn('第1章 序章', text)
+        self.assertEqual(text.count('开篇'), 1, text)
+
     def test_ambiguous_correction_is_refused(self):
         """同一段文字出现多次时无法定位，整批不写入。"""
         book = self.build()
-        edits = self.write_json('edits.json', [{'document': 'OEBPS/c0001.xhtml', 'old': '第', 'new': '个'}])
+        edits = self.write_json('edits.json', [{'document': 'OEBPS/c0003.xhtml', 'old': '保留', 'new': '留下'}])
         output = self.root / 'corrected.epub'
         code, error = run_failing('correct', book, '--edits', edits, '--output', output)
         self.assertEqual(code, 1)

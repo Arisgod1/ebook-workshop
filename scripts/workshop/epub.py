@@ -261,10 +261,16 @@ def cover_item(package):
     return None
 
 
-def text_slots(element):
-    """Text and tail values of an element in document order, for position-based edits."""
+def text_slots(element, skip=()):
+    """Text and tail values of an element in document order, for position-based edits.
+
+    skip 里的标签整棵子树都不遍历：脚本与样式不是给人读的内容，
+    在里面做替换既没意义，也可能改坏页面。
+    """
     slots = []
     def walk(node):
+        if node.tag in skip:
+            return
         slots.append((node, 'text'))
         for child in node:
             walk(child)
@@ -273,10 +279,10 @@ def text_slots(element):
     return slots
 
 
-def find_text_positions(element, needle):
+def find_text_positions(element, needle, skip=()):
     """Every (node, field, offset) where needle appears in one text node."""
     matches = []
-    for node, field in text_slots(element):
+    for node, field in text_slots(element, skip):
         value = getattr(node, field) or ''
         start = value.find(needle)
         while start != -1:
