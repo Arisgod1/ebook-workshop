@@ -157,7 +157,7 @@ python3 -m unittest discover -s tests -t . -v
 
 `validate` 检查书内文件和跳转链接。需要更详细的格式检查时，可安装 Java 和 EPUBCheck，再使用 `--epubcheck`。
 
-测试逐项跑真实命令、检查真实产物——「把书转成 AZW3」这项会真的生成 AZW3 再解压回来读一遍。样本全部在运行时现场生成，不需要额外准备语料。
+测试用 `unittest` 跑：一部分起真实 CLI 断言生成的 EPUB / MOBI / AZW3，另一部分直接核验读写端函数。样本全部在运行时现场生成，不需要额外准备语料。
 
 本仓库不捆绑 Calibre 或 EPUBCheck。
 

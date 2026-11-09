@@ -92,7 +92,8 @@ def decode_entries(header_record, index_record, count=None):
     control_count, tags = tagx_tags(header_record)
     info = index_header(index_record)
     idxt_at = info['start']
-    assert index_record[idxt_at:idxt_at + 4] == b'IDXT', '索引记录的 IDXT 偏移指错了'
+    if index_record[idxt_at:idxt_at + 4] != b'IDXT':
+        raise AssertionError('索引记录的 IDXT 偏移指错了')
     entry_count = info['count'] if count is None else count
     positions = [struct.unpack_from('>H', index_record, idxt_at + 4 + 2 * j)[0]
                  for j in range(entry_count)]
