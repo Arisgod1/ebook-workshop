@@ -24,11 +24,26 @@ Jieba 默认自动加载，已安装的版本直接使用，不比对版本或�
 | 需求 | 操作 |
 | --- | --- |
 | 检查、比较版本 | `inspect`、`compare`。章数和大小只是线索；核实完整性时对照同版目录及内容，核实最新版本时查官方出版说明。 |
-| 转成 EPUB | TXT 用 `build`；Word、PDF 等用 `convert`，需要 Calibre。保留前置文字、作者留言与后记。 |
+| 转成 EPUB | TXT 用 `build`；EPUB、Word（.docx）、ODT、HTML 用 `convert`，原生完成，不需要 Calibre。PDF 等其余格式才需要 Calibre。保留前置文字、作者留言与后记。 |
 | 校对正文 | `proofread` 筛查 → 当前 Agent 复核 → `proofread-apply` 写入副本，详见下节。已有勘误清单也可用 `correct`。 |
 | 调整排版 | `layout --preset cn-novel`，或参考用户样板书。边距、行距、缩进均可调整；效果不确定时先试一章。 |
 | 更换封面 | `cover --image` 使用图片，或 `--from-epub` 搬用另一份书的封面。 |
-| 准备 Kindle 文件 | 邮件用 `kindle --method email`，需要估算页码时加 `--pages`；USB 用 `--method usb` 生成 AZW3。详见 [页码说明](references/kindle-pages.md)。 |
+| 准备 Kindle 文件 | 邮件用 `kindle --method email`，需要估算页码时加 `--pages`；USB 用 `kindle --method usb` 生成 AZW3。详见 [页码说明](references/kindle-pages.md)。 |
+
+## 格式互转
+
+`convert` 原生支持下面这些组合，不需要装 Calibre：
+
+| 读入 | 写出 |
+| --- | --- |
+| EPUB、DOCX、ODT、HTML | EPUB、MOBI、AZW3 |
+
+目标格式由 `--output` 的扩展名决定；`--format` 只在没有指定 `--output` 时生效。
+PDF、纯文本扫描件、旧版 .doc 等超出原生范围，装了 Calibre 才会自动交给它处理，
+否则会明确说明缺什么。原生转换不会改动原文件，也不会覆盖已有输出。
+
+标题层级、目录、封面与元数据都会一并带过去。Word 的中英文标题样式都认得，
+中文版 Word 的「标题 1」比 Calibre 认得更准。
 
 ## 校对技术进一步更新
 

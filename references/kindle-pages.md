@@ -10,7 +10,7 @@
 
 ## 通过 USB 传书
 
-对支持 AZW3 的 Kindle，可用 `kindle --method usb` 借助 Calibre 生成 AZW3。把文件加入 Calibre，再用“发送到设备”传书。需要页码时，在 Calibre 的 Kindle 设备设置中开启页码生成，然后在 Kindle 上确认是否显示。
+对支持 AZW3 的 Kindle，用 `kindle --method usb` 生成 AZW3（原生完成，不需要 Calibre）。把文件加入 Calibre 再用“发送到设备”传书，或直接用 Send to Kindle。需要页码时，在 Calibre 的 Kindle 设备设置中开启页码生成，然后在 Kindle 上确认是否显示。
 
 ## 页码怎么看
 

@@ -18,3 +18,6 @@ outputs/
 *.txt
 .env
 .env.*
+
+# 只在本地跑的真书验收脚本：依赖本机下载的样书，不随仓库分发
+local-only/
