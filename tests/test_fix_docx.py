@@ -320,6 +320,48 @@ class DocxMetadataTests(unittest.TestCase):
         self.assertIn('正文', book.documents[0].content)
 
 
+class DocxNoteTests(unittest.TestCase):
+    """脚注与尾注：文字在别的部件里，不读就整个消失。"""
+
+    FOOTNOTES = ('<?xml version="1.0" encoding="UTF-8"?>'
+                 '<w:footnotes xmlns:w="%s">'
+                 '<w:footnote w:type="separator" w:id="-1">'
+                 '<w:p><w:r><w:t>分隔线不该出现</w:t></w:r></w:p></w:footnote>'
+                 '<w:footnote w:id="1"><w:p><w:r><w:t>这是一条脚注内容</w:t></w:r></w:p></w:footnote>'
+                 '<w:footnote w:id="2"><w:p><w:r><w:t>第二条脚注</w:t></w:r></w:p></w:footnote>'
+                 '</w:footnotes>' % W)
+
+    def _read(self, body, extra):
+        with tempfile.TemporaryDirectory() as temp:
+            path = write_docx(Path(temp) / 'a.docx', body, extra=extra)
+            return docx_input.read(path)
+
+    def test_footnote_text_is_kept(self):
+        """脚注文字在 footnotes.xml 里，必须一起读出来。"""
+        body = ('<w:p><w:r><w:t>正文带脚注引用</w:t></w:r>'
+                '<w:r><w:footnoteReference w:id="1"/></w:r></w:p>')
+        book = self._read(body, {'word/footnotes.xml': self.FOOTNOTES})
+        text = '\n'.join(document.content for document in book.documents)
+        self.assertIn('这是一条脚注内容', text)
+
+    def test_footnote_reference_links_to_the_note(self):
+        """正文里的上标引用要链到注释页，对应关系不能错。"""
+        body = ('<w:p><w:r><w:t>正文</w:t></w:r>'
+                '<w:r><w:footnoteReference w:id="2"/></w:r></w:p>')
+        book = self._read(body, {'word/footnotes.xml': self.FOOTNOTES})
+        notes = next(d for d in book.documents if d.href == 'notes.xhtml')
+        self.assertIn('id="note2"', notes.content)
+        self.assertIn('第二条脚注', notes.content)
+        self.assertIn('href="notes.xhtml#note2"', book.documents[0].content)
+
+    def test_separator_is_not_treated_as_a_note(self):
+        """id 为 -1 的分隔符是排版用的，不是注释。"""
+        body = '<w:p><w:r><w:t>正文</w:t></w:r></w:p>'
+        book = self._read(body, {'word/footnotes.xml': self.FOOTNOTES})
+        text = '\n'.join(document.content for document in book.documents)
+        self.assertNotIn('分隔线不该出现', text)
+
+
 class DocxLimitTests(unittest.TestCase):
     """小压缩包的解压后大小必须有上限。"""
 

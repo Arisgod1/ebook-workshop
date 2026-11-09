@@ -159,6 +159,7 @@ def _read_parts(archive, names):
     media = _read_media(archive, names, relationships)
     heading_levels = _read_heading_levels(archive, names)
     _read_core_properties(archive, names, book)
+    notes = _read_notes(archive, names)
 
     body = _document_body(archive, names)
     if body is None:
@@ -243,7 +244,30 @@ def _read_parts(archive, names):
     book.toc = toc
     if book.title:
         book.add_document(Document('title.xhtml', content=htmltext.title_page(book)))
+    _add_notes_document(book, notes)
     return book
+
+
+def _add_notes_document(book, notes):
+    """把脚注与尾注写成书末的「注释」页。
+
+    注释不塞进正文章节里：一段正文里可能引用多条注释，
+    集中放一页，正文只留上标链接，读起来和纸书一致。
+    """
+    if not notes:
+        return
+    blocks = []
+    for part, heading in (('word/footnotes.xml', '脚注'), ('word/endnotes.xml', '尾注')):
+        entries = notes.get(part)
+        if not entries:
+            continue
+        blocks.append('<h2>%s</h2>' % heading)
+        for number in sorted(entries):
+            blocks.append('<p id="note%d">[%d] %s</p>'
+                          % (number, number, htmltext.escape(entries[number])))
+    body = ''.join(blocks)
+    book.add_document(Document('notes.xhtml',
+                               content=htmltext.document('注释', 1, body)))
 
 
 def _body_blocks(body):
@@ -356,6 +380,44 @@ def _core_value(root, name):
         if value and value.strip():
             return value.strip()
     return ''
+
+
+def _read_notes(archive, names):
+    """读脚注与尾注：返回 {部件名: {编号: 文字}}。
+
+    Word 把脚注放在 word/footnotes.xml、尾注放在 word/endnotes.xml，
+    正文里只有 <w:footnoteReference w:id="N"/> 这样的引用标记。
+    不读这两个部件，脚注的文字就整个消失了——用户看不出来，
+    只觉得「这本书的注释怎么没了」。
+    """
+    result = {}
+    for part, tag in (('word/footnotes.xml', 'footnote'), ('word/endnotes.xml', 'endnote')):
+        if part not in names:
+            continue
+        try:
+            root = xmlsafe.parse(archive.read(part))
+        except (ET.ParseError, ValueError):
+            continue
+        notes = {}
+        for element in root:
+            if element.tag.split('}')[-1] != tag:
+                continue
+            identifier = attr(element, 'id')
+            # id 为 -1 与 0 的是分隔符（续页横线之类），不是真的注释。
+            if identifier is None:
+                continue
+            try:
+                number = int(identifier)
+            except (TypeError, ValueError):
+                continue
+            if number < 1:
+                continue
+            text = _collect_text(element)
+            if text:
+                notes[number] = text
+        if notes:
+            result[part] = notes
+    return result
 
 
 def _read_core_properties(archive, names, book):
@@ -498,6 +560,15 @@ def _walk_parts(element, relationships, media, root=False):
             parts.append(('text', '\n'))
         elif name == 'noBreakHyphen':
             parts.append(('text', '-'))
+        elif name in ('footnoteReference', 'endnoteReference'):
+            # 脚注/尾注的引用标记。文字在另一个部件里，这里只记编号。
+            identifier = attr(child, 'id')
+            try:
+                number = int(identifier)
+            except (TypeError, ValueError):
+                number = None
+            if number is not None and number > 0:
+                parts.append(('note', number))
         elif name == 'blip':
             image = _blip_image(child, relationships, media)
             if image is not None:
@@ -647,6 +718,10 @@ def _parts_html(parts):
     for kind, value in parts:
         if kind == 'image':
             out.append('<img src="%s" alt=""/>' % htmltext.escape(value.href))
+        elif kind == 'note':
+            # 脚注引用：上标数字，链到书末的注释页。
+            out.append('<sup class="workshop-note"><a href="notes.xhtml#note%d">[%d]</a></sup>'
+                       % (value, value))
         else:
             out.append(htmltext.escape(value).replace('\n', '<br/>'))
     return ''.join(out).strip()
