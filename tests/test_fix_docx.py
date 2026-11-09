@@ -394,3 +394,41 @@ class DocxLimitTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DocxAttributeSafetyTests(unittest.TestCase):
+    """图片路径进 HTML 属性时，引号必须转义。"""
+
+    def test_quote_in_image_href_cannot_inject_an_attribute(self):
+        """路径里的引号不能提前闭合 src 并塞进 onload。"""
+        evil = 'media/x.png" onload="alert(1)'
+        doc = ('<?xml version="1.0"?><w:document xmlns:w="%s" xmlns:r="%s" xmlns:a="%s">'
+               '<w:body><w:p><w:r><w:drawing><a:graphic><a:graphicData>'
+               '<a:blip r:embed="rId5"/></a:graphicData></a:graphic></w:drawing>'
+               '</w:r></w:p></w:body></w:document>' % (W, R, A))
+        rels = ('<?xml version="1.0"?><Relationships xmlns="%s">'
+                '<Relationship Id="rId5" Type="image" Target="%s"/></Relationships>'
+                % (PR, evil.replace('"', '&quot;')))
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'a.docx'
+            with zipfile.ZipFile(path, 'w') as archive:
+                archive.writestr('word/document.xml', doc)
+                archive.writestr('word/_rels/document.xml.rels', rels)
+                archive.writestr('word/' + evil, PNG)
+            book = docx_input.read(path)
+        content = book.documents[0].content
+        self.assertNotIn('onload="alert(1)"', content)
+        self.assertIn('&quot;', content)
+        import xml.etree.ElementTree as ET
+        ET.fromstring(content)      # 整份文档必须仍是合法 XML
+
+
+class DocxListLevelTests(unittest.TestCase):
+    """列表层级一次跳多级时不能写出不匹配的标签。"""
+
+    def test_level_jump_opens_every_level(self):
+        items = [{'parts': [('text', '甲')], 'level': 0},
+                 {'parts': [('text', '乙')], 'level': 3}]
+        html = ''.join(docx_input._list_html(items))
+        import xml.etree.ElementTree as ET
+        ET.fromstring('<div>' + html + '</div>')   # 之前这里报 mismatched tag
