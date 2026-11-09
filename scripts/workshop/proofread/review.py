@@ -20,8 +20,34 @@ def save(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + '.tmp')
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    temporary.write_text(dump_json(data), encoding='utf-8')
     temporary.replace(path)
+
+
+def dump_json(data):
+    """复核包写盘用的格式。
+
+    make_packets 的预算必须按这个格式算，否则报告 content_bytes 说没超，
+    实际写出的文件却比预算大一大截。
+    """
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def _packet_bytes(packet):
+    """含 accounting 字段在内的完整写出字节数。
+
+    content_bytes 记的就是这个数，所以要用不动点：先把占位放进去量一次，
+    再把量出来的数填进去，位数不变时结果就稳定了。
+    """
+    note = {'unit': 'UTF-8 bytes', 'content_bytes': 0,
+            'note': '复核包内容大小，不是 token 用量'}
+    used = len(dump_json(dict(packet, accounting=note)).encode('utf-8'))
+    while True:
+        note['content_bytes'] = used
+        size = len(dump_json(dict(packet, accounting=note)).encode('utf-8'))
+        if size == used:
+            return size
+        used = size
 
 
 def candidate_groups(job, pending_only=False):
@@ -90,10 +116,9 @@ def make_packets(job, workers, groups, budget):
                             'status（keep正常/suggested建议修改/unresolved不确定）、'
                             'replacement（修改时填写）、note（简短依据）。保留文学表达，不猜改。'),
             'source_sha256': job['source_sha256'], 'groups': []}
-        # 用一个空组量出信封大小，后面每组只算自己那份字节。
-        overhead = len(json.dumps(dict(packet, groups=[{}]), ensure_ascii=False).encode('utf-8')) - 3
-        used = overhead
-        if used > budget:
+        # 预算按实际写出的格式算（save 用 indent=2），且要含 accounting
+        # 字段本身。只量 instruction + groups 的紧凑 JSON 会低报三四成。
+        if _packet_bytes(packet) > budget:
             raise ValueError('Budget is too small for review instructions')
         included = 0
         for group in candidate_groups(job, pending_only=True):
@@ -106,14 +131,14 @@ def make_packets(job, workers, groups, budget):
                     'occurrences': len(members),
                     'samples': [{'id': member['id'], 'context': member['context']}
                                 for member in members[:3]]}
-            cost = len(json.dumps(item, ensure_ascii=False).encode('utf-8')) + (1 if packet['groups'] else 0)
-            if used + cost > budget:
+            proposed = list(packet['groups']) + [item]
+            if _packet_bytes(dict(packet, groups=proposed)) > budget:
                 continue
-            packet['groups'].append(item)
-            used += cost
+            packet['groups'] = proposed
             for member in members:
                 assigned.add(member['id'])
             included += 1
+        used = _packet_bytes(packet)
         packet['accounting'] = {'unit': 'UTF-8 bytes', 'content_bytes': used,
                                 'note': '复核包内容大小，不是 token 用量'}
         packets.append(packet)
