@@ -338,6 +338,35 @@ class EpubNavTests(unittest.TestCase):
                              'Text/ch1.xhtml')
 
 
+class EpubBrokenReferenceTests(unittest.TestCase):
+    """正文引用了不存在的图片时，要当场说清楚，别拖到写出阶段。"""
+
+    def test_missing_image_is_reported_at_read_time(self):
+        doc = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+               '<head><title>章</title></head><body><p>正文<img src="missing.png"/></p></body></html>')
+        with tempfile.TemporaryDirectory() as temp:
+            source = simple_epub(Path(temp) / 'a.epub', [('ch1.xhtml', doc)])
+            with self.assertRaises(ValueError) as caught:
+                epub_input.read(str(source))
+        message = str(caught.exception)
+        self.assertIn('不存在的图片', message)
+        self.assertIn('missing.png', message)
+
+    def test_image_that_exists_is_accepted(self):
+        """图片真的在书里时不该报错。"""
+        doc = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+               '<head><title>章</title></head><body><p><img src="p.png"/></p></body></html>')
+        with tempfile.TemporaryDirectory() as temp:
+            source = simple_epub(
+                Path(temp) / 'a.epub', [('ch1.xhtml', doc)],
+                manifest_extra='<item id="img" href="p.png" media-type="image/png"/>')
+            # simple_epub 只放文档，图片要另外塞进去。
+            with zipfile.ZipFile(source, 'a') as archive:
+                archive.writestr('OEBPS/p.png', b'\x89PNG\r\n\x1a\n' + b'\x00' * 20)
+            book = epub_input.read(str(source))
+        self.assertIn('p.png', book.images)
+
+
 class EpubCoverTests(unittest.TestCase):
     """封面路径必须和 images 的键对齐，MOBI 里才有资源记录。"""
 

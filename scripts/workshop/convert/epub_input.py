@@ -167,7 +167,43 @@ def read(path):
     # 为这些链接补一份文档，写出的 EPUB 才不会有断链。
     _include_linked_documents(files, base, book)
     book.cover = _find_cover(package, opf, files, base, book)
+    _check_references(files, package, opf, base, book)
     return book
+
+
+def _check_references(files, package, opf, base, book):
+    """正文里引用的图片必须真的在这本书里。
+
+    缺图片的书到写出阶段才报「断链」，报错指向写出端，看起来像是转换
+    出了问题；实际是源书自己引用了一张不存在的图。在这里先说清楚。
+    """
+    known = set(book.images) | set(book.resources)
+    for document in book.documents:
+        for element in _document_elements(document.content):
+            name = _local(element.tag)
+            if name not in ('img', 'image'):
+                continue
+            source = element.get('src') or element.get(epub.q(epub.XLINK, 'href')) or ''
+            if not source or '://' in source or source.startswith(('data:', '#')):
+                continue
+            # src 相对于文档自身，换算成相对内容目录的形式再比对。
+            target = posixpath.normpath(
+                posixpath.join(posixpath.dirname(document.href), unquote(source.partition('#')[0])))
+            if target.startswith('../'):
+                continue
+            if target not in known:
+                raise ValueError(
+                    'EPUB 引用了一张不存在的图片：%s 里指向 %s。'
+                    '这份源书本身缺图片，请补齐后重试，或先删掉这个引用。'
+                    % (document.href, source))
+
+
+def _document_elements(content):
+    """把文档内容解析出元素，解析不了就当没有。"""
+    try:
+        return list(_parse(content.encode('utf-8')).iter())
+    except (ET.ParseError, ValueError):
+        return []
 
 
 def _include_linked_documents(files, base, book):
