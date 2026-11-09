@@ -65,13 +65,14 @@ def _container_parts(element, block_tags):
     if element.text and element.text.strip():
         parts.append(element.text)
     for child in element:
-        if child.tag in block_tags:
-            continue
-        buffer = []
-        walk(child, False, buffer)
-        value = ''.join(buffer)
-        if value.strip():
-            parts.append(value)
+        if child.tag not in block_tags:
+            buffer = []
+            walk(child, False, buffer)
+            value = ''.join(buffer)
+            if value.strip():
+                parts.append(value)
+        # 块级子元素后面紧跟的文字（h2 后的正文、p 后的尾巴）也是正文，
+        # 不能因为子元素本身已经是段落就把它一起丢掉。
         if child.tail and child.tail.strip():
             parts.append(child.tail)
     return parts
@@ -168,6 +169,11 @@ def paragraphs(path):
         # （那是抽取规则没覆盖的排版，不能当成扫过了）。
         for index, element in enumerate(elements):
             if element.tag not in container_tags:
+                continue
+            # blockquote 这类标签既是段落级块又是容器。它已经在上一轮
+            # 作为段落收进 rows 了，这里再算一次就变成两条锚点、
+            # 两个 id 相同的候选，复核包里出现重复组。
+            if element.tag in block_tags:
                 continue
             parent = parents.get(element)
             if parent is not None and parent.tag in container_tags:
