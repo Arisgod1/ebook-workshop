@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from . import epub, names, text
@@ -11,6 +12,13 @@ from . import convert as convert_module
 from .convert import epub_output
 from .convert import htmltext
 from .convert.book import Book, Document, Image, TocEntry
+
+# 「这本书原生读不了」的异常。读入端把解析失败统一表达成 ValueError
+# （各格式自己的 DocxError/OdtError/ArchiveError 都是它的子类），
+# XML 解析器则抛 ET.ParseError。只有这些才值得交给 Calibre 再试一次。
+# 编程错误（TypeError、AttributeError、IndexError…）不在其中：
+# 那是代码写错了，伪装成「这个文件读不了」只会把人误导去装 Calibre。
+_UNREADABLE = (ValueError, ET.ParseError)
 
 
 def build(args):
@@ -89,10 +97,9 @@ def convert(args):
         except convert_module.ConversionError:
             # 输出已存在这类问题不该交给 Calibre 重试一遍。
             raise
-        except Exception as error:
-            # 原生读取不了这个文件（比如内容损坏或结构特殊），
-            # 有 Calibre 就交给它处理。这里放宽到所有异常：解析坏文件时
-            # 可能冒出结构错误、索引越界等各种意料之外的异常。
+        except _UNREADABLE as error:
+            # 这本书原生读不了（内容损坏、结构特殊、缺部件）。有 Calibre 就
+            # 交给它再试一次，没有就告诉用户装 Calibre。
             if not _calibre_available():
                 raise ValueError('Native conversion failed: %s. Install Calibre to convert files '
                                  'the native pipeline cannot read.' % error) from error

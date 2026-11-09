@@ -397,6 +397,35 @@ class ConvertCommandTests(unittest.TestCase):
                 build_cmd.convert(args)
         self.assertIn('.docx', str(caught.exception))
 
+    def test_programming_error_is_not_blamed_on_calibre(self):
+        """代码 bug 不能被说成「这个文件原生读不了，请装 Calibre」。"""
+        with tempfile.TemporaryDirectory() as temp:
+            source = make_docx(Path(temp) / 'a.docx', '<w:p><w:r><w:t>正文。</w:t></w:r></w:p>')
+            args = self.make_args(input=str(source), output=str(Path(temp) / 'a.epub'))
+            original = build_cmd._convert_native
+
+            def boom(*_args, **_kwargs):
+                raise AttributeError("'NoneType' object has no attribute 'documents'")
+
+            build_cmd._convert_native = boom
+            try:
+                with self.assertRaises(AttributeError):
+                    quiet(build_cmd.convert, args)
+            finally:
+                build_cmd._convert_native = original
+
+    def test_unreadable_file_still_offers_calibre(self):
+        """真的读不了的文件，没装 Calibre 时仍给出可执行的建议。"""
+        if build_cmd._calibre_available():
+            self.skipTest('Calibre is installed, so the fallback runs instead')
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / 'a.docx'
+            source.write_bytes(b'not a zip at all')
+            args = self.make_args(input=str(source), output=str(Path(temp) / 'a.epub'))
+            with self.assertRaises(ValueError) as caught:
+                quiet(build_cmd.convert, args)
+        self.assertIn('Calibre', str(caught.exception))
+
 
 class KindleUsbTests(unittest.TestCase):
     """kindle --method usb 一定产出 .azw3。"""
