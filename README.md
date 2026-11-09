@@ -76,6 +76,8 @@
 
 也可以直接使用附带的 Python 工具，操作方法见 [命令参考](references/commands.md)。完整功能清单见 [功能表](references/feature-table.md)。
 
+扫描件可以先用外部 OCR 逐页导成 TXT，再用 `ocr-text` 清洗（合并硬换行、去页眉页码），接着用 `build` 转成带目录的 EPUB。做法见[命令参考](references/commands.md)。
+
 想确认这个工具在你的电脑上是否一切正常，可以跑一遍测试：
 
 ```bash

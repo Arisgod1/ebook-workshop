@@ -25,6 +25,7 @@
 | --- | --- | --- |
 | `inspect` | 查空章、跳号、乱码线索 | `--show-headings` `--pattern` `--encoding` |
 | `compare` | 比多份版本的章节结构与相同段落 | `--encoding` `--pattern` |
+| `ocr-text` | 清洗逐页 OCR 文本，供 `build` 分章 | `--output` `--no-join` `--pattern` |
 | `build` | TXT → EPUB，保留前置文字/留言/后记 | `--title` `--author` `--cover` `--headings-json` `--full-toc` |
 | `convert` | 格式互转 | `--output` `--format` `--title` `--author` |
 | `correct` | 应用已核实的勘误 | `--edits` |

@@ -11,10 +11,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from workshop import (build_cmd, correct_cmd, cover_cmd, inspect_cmd, layout_cmd,
-                      pages_cmd, proofread_cmd, validate_cmd)
+                      ocr_text_cmd, pages_cmd, proofread_cmd, validate_cmd)
 
 MODULES = (inspect_cmd, build_cmd, correct_cmd, cover_cmd, layout_cmd, pages_cmd,
-           proofread_cmd, validate_cmd)
+           proofread_cmd, validate_cmd, ocr_text_cmd)
 
 
 def build_parser():

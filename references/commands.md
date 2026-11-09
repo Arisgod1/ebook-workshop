@@ -26,6 +26,29 @@ python3 scripts/ebook.py compare '版本一.epub' '版本二.txt' '版本三.epu
 
 以第一份为基准，统计忽略空白后完全相同的段落；改写和重新分段会影响计数，不能用它直接判断缺文。`inspect` 还会报告疑似乱码的段落数和所在阅读文件路径，候选需要核实。
 
+## 扫描件 OCR 文本整理
+
+先在外面用 OCR 工具把逐页文字导成 TXT（本仓库不捆绑 OCR 引擎、不联网），
+再用 `ocr-text` 清洗成一行一段的普通文本：
+
+```bash
+python3 scripts/ebook.py ocr-text '/path/页/*.txt' --output '/path/正文.txt'
+python3 scripts/ebook.py build '/path/正文.txt' --title '书名' --author '作者'
+python3 scripts/ebook.py proofread '/path/书名.epub' --job '/path/校对.json'
+```
+
+它会合并被扫描件硬换行切断的句子、剔除反复出现的页眉与页码、归一全角空格，
+并保留章标题让 `build` 能正确分章。多个输入按自然页号排序
+（`page2.txt` 排在 `page10.txt` 前），页与页之间绝不粘死。
+
+- 诗歌、剧本这类换行有意义的文本加 `--no-join`，只归一空白不合并行。
+- 章号格式不标准时用 `--pattern` 传自己的正则；章标题永远不参与合并。
+- 不想删页眉页码时加 `--keep-running-heads`；`--min-repeat` 调整判定门槛。
+- 省略 `--output` 时默认写到第一个输入旁的 `整理后/书名.txt`。
+
+清洗只处理文字，不做版式重建：双栏、表格、公式的阅读顺序由 OCR 引擎决定。
+错字交给 `proofread` 筛查后人工复核，不自动改。扫描件本身仍需先跑 OCR。
+
 ## TXT → EPUB
 
 ```bash
