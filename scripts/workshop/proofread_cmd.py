@@ -46,13 +46,25 @@ def scan_book(args):
                      'variants': hashlib.sha256(VARIANTS_PATH.read_bytes()).hexdigest()}
     rules_hash = scan.digest(json.dumps(configuration, sort_keys=True, ensure_ascii=False))
     output = Path(args.job)
+    previous = None
     if output.exists():
         previous = json.loads(output.read_text(encoding='utf-8'))
         if previous.get('source_sha256') != fingerprint or previous.get('rules_hash') != rules_hash:
             raise ValueError('Source or dictionary changed; choose a new job path')
+    if previous is not None and not args.terms:
         epub.report(review.summary(previous))
         return
+    # job 已存在但这次要 --terms 时，仍要扫一遍正文来统计陌生词；
+    # 直接 early return 会让用户以为词语候选已经写出，实际根本没落盘。
     _, _, _, rows = scan.paragraphs(args.input)
+    if args.terms:
+        review.save(args.terms,
+                    scan.discover_terms(rows, tokenizer, frequencies, provenance) if tokenizer
+                    else {'candidates': [], 'note': 'Book-term discovery requires Jieba; '
+                                                    'spelling scan completed'})
+    if previous is not None:
+        epub.report(review.summary(previous))
+        return
     candidates, exemptions = scan.find_candidates(rows, rules, words, protected, confusions,
                                                   variants, tokenizer, frequencies, fingerprint)
     job = {'version': VERSION,
@@ -68,11 +80,6 @@ def scan_book(args):
            'enhancements': {'lexicon': 'jieba' if tokenizer else 'starter', 'notes': notes},
            'seconds': time.monotonic() - started,
            'candidates': candidates}
-    if args.terms:
-        review.save(args.terms,
-                    scan.discover_terms(rows, tokenizer, frequencies, provenance) if tokenizer
-                    else {'candidates': [], 'note': 'Book-term discovery requires Jieba; '
-                                                    'spelling scan completed'})
     review.save(output, job)
     epub.report(review.summary(job))
 
