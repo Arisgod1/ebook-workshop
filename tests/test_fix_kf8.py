@@ -702,5 +702,22 @@ class DeadCodeTests(unittest.TestCase):
             self.assertFalse(hasattr(mobi_header, name), name)
 
 
+
+class Mobi6IndexCapacityTests(unittest.TestCase):
+    """MOBI 6 的单条索引记录有 64 KiB 上限。"""
+
+    def test_too_many_toc_entries_fails_with_a_readable_message(self):
+        from workshop.convert.book import Book, Document, TocEntry
+        from workshop.convert import mobi_writer
+        book = Book(title='大书', author='a')
+        book.add_document(Document('c1.xhtml',
+                                   content='<html><body><p>%s</p></body></html>' % ('正文' * 10000)))
+        for index in range(6000):
+            book.toc.append(TocEntry('第%d节' % index, href='c1.xhtml'))
+        with self.assertRaises(ValueError) as caught:
+            mobi_writer.build_mobi(book, kf8=False)
+        self.assertIn('64 KiB', str(caught.exception))
+        self.assertIn('AZW3', str(caught.exception))
+
 if __name__ == '__main__':
     unittest.main()

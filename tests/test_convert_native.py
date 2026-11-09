@@ -7,6 +7,7 @@
 import re
 import struct
 import sys
+import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -14,7 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 
 from workshop.convert import book as book_module
-from workshop.convert import docx_input, epub_input, html_input, mobi_writer, odt_input
+from workshop.convert import (docx_input, epub_input, epub_output, html_input,
+                             mobi_writer, odt_input)
 from workshop.convert.mobi import decode_number
 from workshop.convert.palmdoc import compress, decompress
 
@@ -1071,6 +1073,51 @@ class Azw3WriterTests(unittest.TestCase):
         self.assertEqual(struct.unpack('>H', record0[0:2])[0], 2)
         self.assertGreater(struct.unpack('>I', record0[4:8])[0], 0)
 
+
+
+class StylesheetPreservationTests(unittest.TestCase):
+    """原书自带的样式表不能被默认样式覆盖。"""
+
+    def test_original_style_css_is_kept_verbatim(self):
+        custom = 'body { font-family: "My Font"; color: #123; }\n'
+        container = ('<?xml version="1.0"?><container '
+                     'xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">'
+                     '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                     'media-type="application/oebps-package+xml"/></rootfiles></container>')
+        package = ('<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" '
+                   'version="3.0" unique-identifier="id"><metadata '
+                   'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                   '<dc:identifier id="id">x</dc:identifier><dc:title>书</dc:title>'
+                   '<dc:language>zh</dc:language></metadata><manifest>'
+                   '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+                   '<item id="css" href="style.css" media-type="text/css"/>'
+                   '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
+                   'properties="nav"/></manifest><spine><itemref idref="c1"/></spine></package>')
+        doc = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+               '<head><title>章</title><link rel="stylesheet" href="style.css"/></head>'
+               '<body><p>正文</p></body></html>')
+        nav = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" '
+               'xmlns:epub="http://www.idpf.org/2007/ops"><head><title>目录</title></head>'
+               '<body><nav epub:type="toc"><ol><li><a href="c1.xhtml">章</a></li>'
+               '</ol></nav></body></html>')
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / 'a.epub'
+            with zipfile.ZipFile(source, 'w') as archive:
+                archive.writestr('mimetype', b'application/epub+zip',
+                                 compress_type=zipfile.ZIP_STORED)
+                archive.writestr('META-INF/container.xml', container.encode())
+                archive.writestr('OEBPS/content.opf', package.encode())
+                archive.writestr('OEBPS/c1.xhtml', doc.encode())
+                archive.writestr('OEBPS/nav.xhtml', nav.encode())
+                archive.writestr('OEBPS/style.css', custom.encode())
+            book = epub_input.read(source)
+            target = Path(temp) / 'o.epub'
+            epub_output.write(book, target)
+            with zipfile.ZipFile(target) as archive:
+                written = archive.read('OEBPS/style.css').decode()
+                opf = archive.read('OEBPS/content.opf').decode()
+        self.assertEqual(written, custom)
+        self.assertEqual(opf.count('href="style.css"'), 1, '样式表登记了两次')
 
 if __name__ == '__main__':
     unittest.main()
