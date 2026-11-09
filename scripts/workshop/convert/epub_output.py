@@ -35,8 +35,13 @@ def write(book, path):
 
 def _assemble(book):
     """生成 EPUB 的全部部件。"""
-    files = {'mimetype': b'application/epub+zip',
-             CONTENT_DIR + '/' + STYLE_HREF: BASE_CSS.encode()}
+    files = {'mimetype': b'application/epub+zip'}
+    # 原书自带 style.css 时以它为准：那是作者排的版，不能被默认样式覆盖。
+    # 别的读入端没有样式表，才写默认那份。
+    if STYLE_HREF in book.styles:
+        files[CONTENT_DIR + '/' + STYLE_HREF] = book.styles[STYLE_HREF].encode('utf-8')
+    else:
+        files[CONTENT_DIR + '/' + STYLE_HREF] = BASE_CSS.encode()
     files['META-INF/container.xml'] = (
         '<?xml version="1.0"?><container xmlns="' + epub.C
         + '" version="1.0"><rootfiles><rootfile full-path="' + CONTENT_DIR + '/content.opf"'
@@ -132,6 +137,7 @@ def _assemble(book):
         manifest.append({'id': ident, 'href': href, 'media-type': media_type})
 
     # 样式表。原样带走，正文的排版才保得住。
+    # style.css 已在开头写好并登记，这里只处理别的样式表。
     for href, text in book.styles.items():
         if href in {STYLE_HREF, NCX_HREF, NAV_HREF, nav_href, 'content.opf'} or href in hrefs:
             continue
