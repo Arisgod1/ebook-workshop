@@ -22,6 +22,10 @@ def safe_filename(title, extension=''):
     safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', title).strip(' .')
     if not safe:
         return ''
+    # 书名里已经带着目标扩展名时不要再加一遍，
+    # 否则「活着.epub」会变成「活着.epub.epub」。
+    if extension and safe.lower().endswith(extension.lower()):
+        safe = safe[:-len(extension)]
     # 保留名要改掉，否则 Windows 上连文件都建不出来。
     if safe.upper() in RESERVED_NAMES or safe.split('.')[0].upper() in RESERVED_NAMES:
         safe = '_' + safe

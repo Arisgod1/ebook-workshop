@@ -289,6 +289,13 @@ class OutputNameTests(unittest.TestCase):
     def test_normal_titles_are_left_alone(self):
         self.assertEqual(names.safe_filename('杀死一只知更鸟', '.epub'), '杀死一只知更鸟.epub')
 
+    def test_extension_is_not_appended_twice(self):
+        """书名自带扩展名时不要重复添加，否则成了「活着.epub.epub」。"""
+        self.assertEqual(names.safe_filename('活着.epub', '.epub'), '活着.epub')
+        self.assertEqual(names.safe_filename('活着.EPUB', '.epub'), '活着.epub')
+        # 别的扩展名不是同一个，仍然要补上。
+        self.assertEqual(names.safe_filename('活着.mobi', '.epub'), '活着.mobi.epub')
+
     def test_long_titles_are_shortened_by_characters(self):
         name = names.safe_filename('长' * 400, '.epub')
         self.assertLessEqual(len(name), names.MAX_NAME_LENGTH + len('.epub'))
