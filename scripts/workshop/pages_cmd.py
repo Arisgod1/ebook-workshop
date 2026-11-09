@@ -57,7 +57,8 @@ def paginate(args):
                 parent.insert(list(parent).index(block), marker)
                 markers.append((counter, path, ident))
             count += len(re.sub(r'\s', '', ''.join(block.itertext())))
-        assert epub.visible(body) == original, 'Pagination changed visible text'
+        if epub.visible(body) != original:
+            raise ValueError('Pagination changed visible text: ' + path)
         files[path] = epub.dump(root)
         processed.append(path)
     if not markers:

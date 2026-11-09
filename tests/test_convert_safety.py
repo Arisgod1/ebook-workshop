@@ -6,6 +6,7 @@
 
 import argparse
 import contextlib
+import inspect
 import io
 import os
 import sys
@@ -489,6 +490,24 @@ class EpubOutputImageTests(unittest.TestCase):
                 chapter = handle.read('OEBPS/Text/ch1.xhtml')
         self.assertIn('OEBPS/Images/p.png', names)
         self.assertIn(b'../Images/p.png', chapter)
+
+
+class CommandGuardTests(unittest.TestCase):
+    """守护「正文不许被改坏」的检查必须用 raise，不能用 assert。
+
+    python -O 会把 assert 整个移除；这两条检查守护的正是用户文件
+    有没有被悄悄改坏，不能依赖 assert。
+    """
+
+    def test_pagination_guard_is_a_real_check(self):
+        from workshop import pages_cmd
+        source = inspect.getsource(pages_cmd.paginate)
+        self.assertIn("raise ValueError('Pagination changed visible text", source)
+
+    def test_cover_guard_is_a_real_check(self):
+        from workshop import cover_cmd
+        source = inspect.getsource(cover_cmd.cover)
+        self.assertIn('Replacing the cover changed existing content documents', source)
 
 
 if __name__ == '__main__':

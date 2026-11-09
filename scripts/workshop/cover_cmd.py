@@ -47,7 +47,9 @@ def cover(args):
     navigation = {epub.resolve(opf, e.get('href'))[0] for e in package.findall('./' + epub.q(epub.O, 'manifest')
                                                                                  + '/' + epub.q(epub.O, 'item'))
                   if 'nav' in e.get('properties', '').split() or e.get('media-type') == 'application/x-dtbncx+xml'}
-    assert all(result[name] == body for name, body in files.items() if name != opf and name not in navigation)
+    if not all(result[name] == body for name, body in files.items()
+               if name != opf and name not in navigation):
+        raise ValueError('Replacing the cover changed existing content documents')
     args.output = names.output_for(args, epub.book_title(package))
     epub.write(result, args.output)
     mime, ext, width, height = names.image_info(data)
