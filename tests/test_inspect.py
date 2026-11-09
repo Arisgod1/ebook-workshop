@@ -46,3 +46,20 @@ class InspectTests(Workspace):
         code, error = run_failing('compare', book)
         self.assertEqual(code, 2)
         self.assertIn('at least two files', error)
+
+    def test_chinese_chapter_numbers_are_recognized(self):
+        """「第一章」这类中文章号要能识别，编号才算得出来。"""
+        path = self.root / 'cn.txt'
+        path.write_text('第一章 甲\n正文。\n第二章 乙\n更多。\n第五章 丙\n末段。\n', encoding='utf-8')
+        report = run('inspect', path)
+        self.assertEqual(report['chapter_headings_recognized'], 3)
+        self.assertEqual(report['declared_numbers'], [1, 2, 5])
+        self.assertEqual(report['numbering_jumps'], [[2, 5]])
+
+    def test_custom_pattern_with_chinese_numbers_does_not_crash(self):
+        """自定义 pattern 把中文数字放进 number 组时不能崩。"""
+        path = self.root / 'cn2.txt'
+        path.write_text('第一章 甲\n正文。\n第二章 乙\n', encoding='utf-8')
+        pattern = r'^第(?P<number>[一二三四五六七八九十]+)章\s*(?P<title>.*)$'
+        report = run('inspect', path, '--pattern', pattern)
+        self.assertEqual(report['declared_numbers'], [1, 2])

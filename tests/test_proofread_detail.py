@@ -21,7 +21,7 @@ class ProofreadDetailTests(Workspace):
 
     def verdict(self, old, replacement, status='approved', suggestion=None):
         """A decision for one error kind, the way a reviewer answers a packet."""
-        candidate = next(c for c in json.loads(self.job.read_text())['candidates'] if c['old'] == old)
+        candidate = next(c for c in json.loads(self.job.read_text(encoding='utf-8'))['candidates'] if c['old'] == old)
         return {'old': old, 'suggestion': suggestion if suggestion is not None else candidate['suggestion'],
                 'reason': candidate['reason'], 'status': status,
                 'replacement': replacement, 'note': '确认'}
@@ -40,7 +40,7 @@ class ProofreadDetailTests(Workspace):
         """脚注和列表里的文字同样会被检查，嵌套段落不重复计算。"""
         self.rewrite(lambda text: text.replace('</body>', '<ul><li>脚注千活。</li><li><p>脚注千活。</p></li></ul></body>'))
         self.scan()
-        candidates = json.loads(self.job.read_text())['candidates']
+        candidates = json.loads(self.job.read_text(encoding='utf-8'))['candidates']
         self.assertEqual(sum(c['old'] == '千活' for c in candidates), 4)
 
     def test_uncovered_text_stops_the_scan(self):
@@ -51,12 +51,48 @@ class ProofreadDetailTests(Workspace):
         self.assertIn('Uncovered reading text', error)
         self.assertFalse(self.job.exists())
 
+    def test_text_in_a_div_is_scanned(self):
+        """正文放在 div 里的书也要扫到，不能整本漏掉。"""
+        self.rewrite(lambda text: text.replace(
+            '</body>', '<div><p>但千活时的专注令她镇静。</p></div></body>'))
+        self.scan()
+        candidates = json.loads(self.job.read_text(encoding='utf-8'))['candidates']
+        self.assertTrue(any(c['old'] == '千活' for c in candidates))
+
+    def test_epigraph_beside_paragraphs_is_scanned(self):
+        """容器里既有段落又有不带段落的文字（题记）时，题记也要扫到。"""
+        self.rewrite(lambda text: text.replace(
+            '</body>', '<div><aside>题记：千活是她的信条。</aside>'
+                       '<p>但千活时的专注令她镇静。</p></div></body>'))
+        self.scan()
+        candidates = json.loads(self.job.read_text(encoding='utf-8'))['candidates']
+        self.assertTrue(any('题记' in c['context'] and c['old'] == '千活' for c in candidates))
+
+    def test_navigation_page_is_skipped(self):
+        """整页都是链接的目录页不是正文，不进校对范围。"""
+        entries = epub_entries(self.book)
+        entries['OEBPS/c0002.xhtml'] = (
+            '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head>'
+            '<title>目录</title></head><body>'
+            '<div class="toc-title">目录</div>'
+            '<div class="toc-1"><a href="c0001.xhtml">第一章</a></div>'
+            '<div class="toc-1"><a href="c0003.xhtml">第二章</a></div>'
+            '</body></html>').encode()
+        with zipfile.ZipFile(self.book, 'w') as archive:
+            archive.writestr('mimetype', b'application/epub+zip', compress_type=zipfile.ZIP_STORED)
+            for name, body in entries.items():
+                if name != 'mimetype':
+                    archive.writestr(name, body)
+        self.scan()
+        job = json.loads(self.job.read_text(encoding='utf-8'))
+        self.assertGreater(job['paragraphs_scanned'], 0)
+
     def test_protected_term_does_not_hide_neighbouring_errors(self):
         """豁免只覆盖词语本身，旁边的错字和夹杂的异常字符照样报。"""
         self.rewrite(lambda text: text.replace('</body>', '<p>专名千活i兑</p></body>'))
         dictionary = self.write_json('book.json', {'protected': ['专名', 'i兑']})
         self.scan('--book-dictionary', dictionary)
-        candidates = json.loads(self.job.read_text())['candidates']
+        candidates = json.loads(self.job.read_text(encoding='utf-8'))['candidates']
         self.assertEqual(sum(c['old'] == '千活' for c in candidates), 3)
         self.assertEqual(sum(c['old'] == 'i兑' for c in candidates), 2)
 
@@ -71,7 +107,7 @@ class ProofreadDetailTests(Workspace):
         """引号边界和字间竖线这类排版噪声会被标出来。"""
         self.rewrite(lambda text: text.replace('</body>', '<p>“我很荣幸他说，“我们出发。”</p><p>种|马</p></body>'))
         self.scan()
-        reasons = {c['reason'] for c in json.loads(self.job.read_text())['candidates']}
+        reasons = {c['reason'] for c in json.loads(self.job.read_text(encoding='utf-8'))['candidates']}
         self.assertIn('quotation_boundary', reasons)
         self.assertIn('separator_noise', reasons)
 
@@ -79,7 +115,7 @@ class ProofreadDetailTests(Workspace):
         """简体正文里混入的繁体字、异体字会被标出来并给出规范写法。"""
         self.rewrite(lambda text: text.replace('</body>', '<p>奧雷里亚诺有些 HIGGS 髙昂</p></body>'))
         self.scan()
-        candidates = json.loads(self.job.read_text())['candidates']
+        candidates = json.loads(self.job.read_text(encoding='utf-8'))['candidates']
         found = {c['old']: c['suggestion'] for c in candidates if c['reason'] == 'variant_character'}
         self.assertEqual(found.get('奧'), '奥')
         self.assertEqual(found.get('髙'), '高')
@@ -89,7 +125,7 @@ class ProofreadDetailTests(Workspace):
         """同一种错字只判断一次，判定结果套用到所有出现的位置。"""
         self.rewrite(lambda text: text.replace('</body>', '<p>但千活时的专注。另有一处千活时更专注。</p></body>'))
         self.scan()
-        candidates = json.loads(self.job.read_text())['candidates']
+        candidates = json.loads(self.job.read_text(encoding='utf-8'))['candidates']
         repeated = [c for c in candidates if c['old'] == '千活']
         self.assertGreaterEqual(len(repeated), 2)
         decisions = self.write_json('decisions.json', [self.verdict('千活', '干活')])
@@ -104,14 +140,14 @@ class ProofreadDetailTests(Workspace):
         """多条规则指向同一处时，取范围更广的那条，其余不再重复写入。"""
         self.rewrite(lambda text: text.replace('</body>', '<p>但千活时的专注。</p></body>'))
         self.scan()
-        candidates = json.loads(self.job.read_text())['candidates']
+        candidates = json.loads(self.job.read_text(encoding='utf-8'))['candidates']
         target = next(c for c in candidates if c['old'] == '千活')
         target.update(status='approved', replacement='干活')
-        data = json.loads(self.job.read_text())
+        data = json.loads(self.job.read_text(encoding='utf-8'))
         data['candidates'].append(dict(target, id='overlapping',
                                         start=target['start'] + 1, end=target['end'],
                                         old=target['old'][1:], suggestion='活'))
-        self.job.write_text(json.dumps(data))
+        self.job.write_text(json.dumps(data), encoding='utf-8')
         output = self.root / 'fixed.epub'
         run('proofread-apply', '--job', self.job, '--output', output)
         self.assertIn('干活', epub_text(output, 'OEBPS/c0001.xhtml'))
@@ -119,7 +155,7 @@ class ProofreadDetailTests(Workspace):
     def test_a_verdict_reaches_every_occurrence(self):
         """同一错字出现多处时，一次判定全部改掉。"""
         self.scan()
-        candidates = [c for c in json.loads(self.job.read_text())['candidates'] if c['old'] == '千活']
+        candidates = [c for c in json.loads(self.job.read_text(encoding='utf-8'))['candidates'] if c['old'] == '千活']
         decisions = self.write_json('decisions.json', [self.verdict('千活', '干活')])
         run('proofread-review', '--job', self.job, '--decisions', decisions)
         output = self.root / 'fixed.epub'
@@ -151,12 +187,12 @@ class ProofreadDetailTests(Workspace):
     def test_overlapping_approved_changes_are_refused(self):
         """同一处被批准了两种不同的改法时拒绝写入。"""
         self.scan()
-        data = json.loads(self.job.read_text())
+        data = json.loads(self.job.read_text(encoding='utf-8'))
         candidate = next(c for c in data['candidates'] if c['old'] == '千活')
         candidate.update(status='approved', replacement='干活')
         data['candidates'].append(dict(candidate, id='overlapping',
                                         replacement='干活用'))
-        self.job.write_text(json.dumps(data))
+        self.job.write_text(json.dumps(data), encoding='utf-8')
         code, _ = run_failing('proofread-apply', '--job', self.job, '--output', self.root / 'fixed.epub')
         self.assertEqual(code, 1)
         self.assertFalse((self.root / 'fixed.epub').exists())

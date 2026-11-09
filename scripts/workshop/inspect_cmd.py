@@ -8,6 +8,23 @@ from . import epub, text
 HEADINGS = {epub.q(epub.H, 'h' + str(level)) for level in range(1, 7)}
 
 
+def _as_int(value):
+    """章号转成整数；转不了就当作没有章号，不能崩。
+
+    用户自定义 --pattern 时，number 组里可能放的是「十五」这样的中文数字。
+    """
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text_value = str(value).strip()
+    if not text_value:
+        return None
+    if text_value.isdigit():
+        return int(text_value)
+    return text.chinese_number(text_value)
+
+
 def snapshot(path, args):
     """Collect structural facts about one TXT or EPUB, without quoting its text."""
     chapters, groups, records = [], [], []
@@ -51,9 +68,15 @@ def snapshot(path, args):
                 value = ''.join(element.itertext()).strip() if element.tag in HEADINGS or element.tag == epub.q(epub.H, 'p') else ''
                 if element.tag in HEADINGS:
                     match = re.match(args.pattern, value)
-                    number = (match.groupdict().get('number') or match.groupdict().get('pipe_number')) if match else None
+                    number = None
+                    if match:
+                        groups_of = match.groupdict()
+                        number = groups_of.get('number') or groups_of.get('pipe_number')
+                        if not number:
+                            # 中文章号：第N章 里的 N 可能是「十五」这样的中文数字。
+                            number = text.chinese_number(groups_of.get('cn_number'))
                     if match or text.section_label(value):
-                        current = {'heading': value, 'number': int(number) if number else None, 'paragraphs': []}
+                        current = {'heading': value, 'number': _as_int(number), 'paragraphs': []}
                         chapters.append(current)
                     if value:
                         groups.append(value)
