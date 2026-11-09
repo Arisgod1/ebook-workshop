@@ -668,7 +668,9 @@ def _list_html(items):
     for item in items:
         level = item.get('level', 0)
         if level > depth:
-            parts.append('<ul>')
+            # 层级可能一次跳好几级，每一级都要开一层，否则结尾会
+            # 按 depth 关掉比实际开过的更多层，标签直接不匹配。
+            parts.extend(['<ul>'] * (level - depth))
             depth = level
         elif level < depth:
             while depth > level:
@@ -717,7 +719,7 @@ def _parts_html(parts):
     out = []
     for kind, value in parts:
         if kind == 'image':
-            out.append('<img src="%s" alt=""/>' % htmltext.escape(value.href))
+            out.append('<img src="%s" alt=""/>' % htmltext.escape_attr(value.href))
         elif kind == 'note':
             # 脚注引用：上标数字，链到书末的注释页。
             out.append('<sup class="workshop-note"><a href="notes.xhtml#note%d">[%d]</a></sup>'
