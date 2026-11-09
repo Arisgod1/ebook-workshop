@@ -1,6 +1,10 @@
 """校对的细节场景：脚注、专名豁免边界、重复句定位、跨标签保护。"""
 import json
+import sys
 import zipfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 
 from tests.support import Workspace, epub_entries, epub_text, run, run_failing
 
@@ -196,3 +200,64 @@ class ProofreadDetailTests(Workspace):
         code, _ = run_failing('proofread-apply', '--job', self.job, '--output', self.root / 'fixed.epub')
         self.assertEqual(code, 1)
         self.assertFalse((self.root / 'fixed.epub').exists())
+
+
+class ProofreadAuditTests(Workspace):
+    """审计里复现出来的四个校对缺陷。"""
+
+    def setUp(self):
+        super().setUp()
+        self.source.write_text('第1章 开篇\n但千活时的专注令她镇静。\n', encoding='utf-8')
+        self.book = self.build()
+        self.job = self.root / 'job.json'
+
+    def _rewrite_body(self, body):
+        entries = epub_entries(self.book)
+        entries['OEBPS/c0001.xhtml'] = (
+            '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+            '<head><title>章</title></head><body>' + body + '</body></html>').encode()
+        with zipfile.ZipFile(self.book, 'w') as archive:
+            archive.writestr('mimetype', b'application/epub+zip',
+                             compress_type=zipfile.ZIP_STORED)
+            for name, data in entries.items():
+                if name != 'mimetype':
+                    archive.writestr(name, data)
+
+    def test_text_after_a_heading_inside_a_section_is_scanned(self):
+        """容器里块级元素后面紧跟的裸文字，以前整段静默漏掉。"""
+        self._rewrite_body('<section><h2>标题</h2>正文千活。</section>')
+        report = run('proofread', self.book, '--job', self.job, '--lexicon', 'starter')
+        candidates = json.loads(self.job.read_text(encoding='utf-8'))['candidates']
+        self.assertTrue(any('正文千活' in c['context'] for c in candidates),
+                        '紧跟 h2 的正文没被扫到')
+        self.assertGreaterEqual(report['characters_scanned'], 9)
+
+    def test_blockquote_is_not_scanned_twice(self):
+        """blockquote 既是段落又是容器，不能产生两个 id 相同的候选。"""
+        self._rewrite_body('<blockquote>千活引言</blockquote>')
+        run('proofread', self.book, '--job', self.job, '--lexicon', 'starter')
+        candidates = json.loads(self.job.read_text(encoding='utf-8'))['candidates']
+        ids = [c['id'] for c in candidates]
+        self.assertEqual(len(ids), len(set(ids)), 'blockquote 被重复扫描')
+
+    def test_review_packet_reports_its_real_size(self):
+        """content_bytes 要等于实际写出的字节数，且不能超预算。"""
+        from workshop.proofread import review
+        job = {'source_sha256': 'a' * 64, 'candidates': [
+            {'id': 'id%03d' % i, 'old': '字%d' % i, 'suggestion': '正%d' % i,
+             'reason': 'known_alternative', 'context': '上下文' * 8,
+             'status': 'pending', 'priority': 2}
+            for i in range(30)]}
+        packet = review.make_packets(job, 1, 30, 3000)[0]
+        target = self.root / 'packet.json'
+        review.save(target, packet)
+        self.assertEqual(packet['accounting']['content_bytes'], target.stat().st_size)
+        self.assertLessEqual(target.stat().st_size, 3000)
+
+    def test_terms_are_written_even_when_the_job_already_exists(self):
+        """第二次带 --terms 运行时，词语候选文件不能静默不写。"""
+        run('proofread', self.book, '--job', self.job, '--lexicon', 'starter')
+        terms = self.root / 'terms.json'
+        run('proofread', self.book, '--job', self.job, '--terms', terms,
+            '--lexicon', 'starter')
+        self.assertTrue(terms.is_file(), 'job 已存在时 --terms 被跳过了')
