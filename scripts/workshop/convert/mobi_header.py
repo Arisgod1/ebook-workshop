@@ -313,6 +313,13 @@ def build_index(entries, tags=None, masks=None, cncx_strings=()):
         body.extend(block)
 
     body_block = bytes(align_block(bytes(body)))
+    # IDXT 的条目偏移是 u16，单条索引记录最多 64 KiB - 头长。
+    # 目录特别多的书会撞到这个上限；此时要明确说出来，而不是让
+    # struct.pack 抛一个用户看不懂的 'H' format requires ...。
+    if positions and INDEX_HEADER_LENGTH + positions[-1] > 0xFFFF:
+        raise ValueError(
+            'MOBI 6 目录条目过多（%d 条），单条索引记录超过 64 KiB。'
+            '这种书请改用 AZW3，或先合并目录层级。' % len(entries))
     idxt = bytearray(b'IDXT')
     for position in positions:
         idxt.extend(struct.pack('>H', INDEX_HEADER_LENGTH + position))
