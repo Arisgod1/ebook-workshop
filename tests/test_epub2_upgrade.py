@@ -8,6 +8,7 @@ convert 就能转，所以这里直接自动转。
 import json
 import struct
 import sys
+import tempfile
 import unittest
 import zipfile
 import zlib
@@ -110,6 +111,61 @@ class Epub3UpgradeTests(unittest.TestCase):
     def test_upgraded_book_passes_validation(self):
         files, opf, package = epub3.load_epub3(self.book)
         epub.validate_files(files)
+
+
+
+def make_epub2_at_root(path):
+    """写一个 EPUB 2 的书，但 package 直接放在包根下（不在 OEBPS/）。
+
+    这种书不少见：内容目录就是包根。nav 必须跟着 OPF 走，
+    写死 OEBPS/nav.xhtml 就会和清单里登记的路径对不上。
+    """
+    container = ('<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"'
+                 ' version="1.0"><rootfiles><rootfile full-path="content.opf"'
+                 ' media-type="application/oebps-package+xml"/></rootfiles></container>')
+    package = ('<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0"'
+               ' unique-identifier="book-id">'
+               '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+               '<dc:identifier id="book-id">urn:uuid:test</dc:identifier>'
+               '<dc:title>老书</dc:title><dc:language>zh-CN</dc:language></metadata>'
+               '<manifest>'
+               '<item id="c1" href="Text/ch1.xhtml" media-type="application/xhtml+xml"/>'
+               '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+               '</manifest>'
+               '<spine toc="ncx"><itemref idref="c1"/></spine>'
+               '</package>')
+    page = ('<?xml version="1.0" encoding="UTF-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第1章</title></head>'
+            '<body><h1>第1章</h1><p>正文第一段。</p></body></html>')
+    ncx = ('<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+           '<head><meta name="dtb:uid" content="urn:uuid:test"/></head>'
+           '<docTitle><text>老书</text></docTitle><navMap>'
+           '<navPoint id="n1" playOrder="1"><navLabel><text>第1章</text></navLabel>'
+           '<content src="Text/ch1.xhtml"/></navPoint>'
+           '</navMap></ncx>')
+    with zipfile.ZipFile(path, 'w') as handle:
+        handle.writestr('mimetype', b'application/epub+zip', compress_type=zipfile.ZIP_STORED)
+        handle.writestr('META-INF/container.xml', container)
+        handle.writestr('content.opf', package)
+        handle.writestr('Text/ch1.xhtml', page)
+        handle.writestr('toc.ncx', ncx)
+    return path
+
+
+class Epub2RootPackageTests(unittest.TestCase):
+    """package 直接放在包根的书，升级时 nav 的路径要跟着走。"""
+
+    def test_nav_lands_next_to_the_package(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = make_epub2_at_root(Path(temp) / 'a.epub')
+            files, opf, package = epub3.load_epub3(str(source))
+            self.assertIn('nav.xhtml', files)
+            self.assertNotIn('OEBPS/nav.xhtml', files)
+            items, _ = epub.inventory(files, opf, package)
+            for item in items.values():
+                target = epub.resolve(opf, item.get('href'))[0]
+                self.assertIn(target, files,
+                              '清单里的 %s 指向不存在的 %s' % (item.get('href'), target))
 
 
 class Epub2CommandTests(unittest.TestCase):

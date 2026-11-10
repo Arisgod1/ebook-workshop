@@ -51,7 +51,11 @@ def _to_epub3(files, opf, package):
     if not documents:
         return None
 
-    nav_name = 'OEBPS/nav.xhtml'
+    # nav 放在 OPF 所在的目录里。写死 OEBPS/ 的话，OPF 不在 OEBPS/
+    # 的书（内容直接放在包根下）会算出错的路径：文件写到 OEBPS/nav.xhtml，
+    # 清单里登记的却是 nav.xhtml，写出时的校验报「资源不存在」。
+    base = opf.rsplit('/', 1)[0] if '/' in opf else ''
+    nav_name = (base + '/nav.xhtml') if base else 'nav.xhtml'
     if nav_name in files:
         return files, opf, package
 
