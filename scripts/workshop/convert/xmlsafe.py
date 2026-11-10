@@ -13,34 +13,12 @@ ElementTree 默认接受 DTD 里的实体定义，几十字节就能展开成上
 """
 
 import xml.etree.ElementTree as ET
-import xml.parsers.expat
+
+from .. import epub
 
 
 class XmlError(ValueError):
     """XML 不安全或无法解析。"""
-
-
-class _StopScan(Exception):
-    """扫描到实体声明就中止，不再往下走。"""
-
-
-class _EntityGuard:
-    """用 Expat 的回调在实体展开之前拦住实体定义。"""
-
-    def __init__(self):
-        self.found = None
-
-    def entity_decl(self, name, is_parameter, value, base, system_id, public_id,
-                    notation_name):
-        # 记下第一个就够：只要有实体定义就拒绝。
-        if self.found is None:
-            self.found = name
-        # 立刻中止：继续解析等于替攻击者把炸弹展开一遍。
-        raise _StopScan()
-
-    def external_entity_ref(self, context, base, system_id, public_id):
-        self.found = self.found or '#external'
-        raise _StopScan()
 
 
 def parse(data):
@@ -49,24 +27,15 @@ def parse(data):
     先用 Expat 扫一遍看有没有实体声明，再交给 ElementTree 真正解析。
     两步分开是有意的：Expat 那步只判定，不构造元素树，代价很小，
     而它在展开实体之前就把人拦下来了。
+
+    编码也不用操心：Expat 自己认 UTF-8 / UTF-16 / 带 BOM 的形式。
     """
     if isinstance(data, str):
         data = data.encode('utf-8')
-    guard = _EntityGuard()
-    scanner = xml.parsers.expat.ParserCreate()
-    scanner.EntityDeclHandler = guard.entity_decl
-    scanner.ExternalEntityRefHandler = guard.external_entity_ref
     try:
-        scanner.Parse(data, True)
-    except _StopScan:
-        pass
-    except xml.parsers.expat.ExpatError:
-        # 语法本身有问题，交给下面的 ElementTree 去报错。
-        pass
-    except Exception:
-        pass
-    if guard.found:
-        raise XmlError('XML contains entity declarations; refusing to expand it')
+        epub.refuse_entities(data)
+    except ValueError as exc:
+        raise XmlError(str(exc)) from exc
     try:
         return ET.fromstring(data)
     except ET.ParseError as exc:

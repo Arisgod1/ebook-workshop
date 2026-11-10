@@ -116,6 +116,24 @@ class XmlSafetyTests(unittest.TestCase):
         with self.assertRaises(xmlsafe.XmlError):
             xmlsafe.parse(b'<!ENTITY x "y"><root/>')
 
+    def test_utf16_entity_bomb_is_refused_by_the_container_parser(self):
+        """容器层的 epub.xml 也要拦得住 UTF-16 的实体炸弹。
+
+        它原来用正则扫字节，UTF-16 里关键字被零字节隔开，匹配不到，
+        炸弹直接展开成千万字符。现在与 xmlsafe 共用同一套检查。
+        """
+        document = ('<?xml version="1.0" encoding="UTF-16"?>\n'
+                    '<!DOCTYPE d [<!ENTITY a "1234567890">'
+                    '<!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]>\n'
+                    '<d>&b;</d>\n')
+        with self.assertRaises(ValueError):
+            epub.xml(document.encode('utf-16'))
+
+    def test_html_entities_still_expand(self):
+        """实体检查换实现后，HTML 实体的兜底展开不能丢。"""
+        root = epub.xml(b'<r><p>a&nbsp;b</p></r>')
+        self.assertIn('\xa0', ''.join(root.itertext()))
+
     def test_broken_xml_raises_a_readable_error(self):
         with self.assertRaises(xmlsafe.XmlError):
             xmlsafe.parse(b'<root><unclosed></root>')

@@ -7,6 +7,7 @@ import re
 import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -60,9 +61,55 @@ def _expand_html_entities(data):
     return _HTML_ENTITY.sub(replace, data)
 
 
-def xml(data):
-    if re.search(br'<!\s*(ENTITY|DOCTYPE[^>]*\[)', data, re.I):
+class _StopEntityScan(Exception):
+    """扫描到实体声明就中止，不再往下走。"""
+
+
+class _EntityGuard:
+    """用 Expat 的回调在实体展开之前拦住实体定义。"""
+
+    def __init__(self):
+        self.found = None
+
+    def entity_decl(self, name, is_parameter, value, base, system_id, public_id,
+                    notation_name):
+        # 记下第一个就够：只要有实体定义就拒绝。
+        if self.found is None:
+            self.found = name
+        # 立刻中止：继续解析等于替攻击者把炸弹展开一遍。
+        raise _StopEntityScan()
+
+    def external_entity_ref(self, context, base, system_id, public_id):
+        self.found = self.found or '#external'
+        raise _StopEntityScan()
+
+
+def refuse_entities(data):
+    """文档里带实体定义就拒绝。
+
+    用解析器自己的回调判断，不能靠扫文本：DOCTYPE 声明可以出现在根元素
+    之前的任意位置（前面垫一段长注释就能躲过「只看开头」的检查），
+    而 UTF-16 编码里的关键字被零字节隔开，正则根本匹配不到。
+    """
+    guard = _EntityGuard()
+    scanner = expat.ParserCreate()
+    scanner.EntityDeclHandler = guard.entity_decl
+    scanner.ExternalEntityRefHandler = guard.external_entity_ref
+    try:
+        scanner.Parse(data, True)
+    except _StopEntityScan:
+        pass
+    except expat.ExpatError:
+        # 语法本身有问题，交给调用方去报错。
+        pass
+    except Exception:
+        pass
+    if guard.found:
         raise ValueError('XML entity declarations are not supported')
+
+
+def xml(data):
+    refuse_entities(data)
     try:
         return ET.fromstring(data)
     except ET.ParseError:
