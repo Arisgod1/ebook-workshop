@@ -133,7 +133,7 @@ class FileposOffsetTests(unittest.TestCase):
         ])
         serializer, stream = stream_of(book)
         stream.decode('utf-8')                       # 必须是合法 UTF-8
-        targets = [int(value) for value in re.findall(rb'filepos=(\d{10})', stream)]
+        targets = [int(value) for value in re.findall(rb'filepos="(\d{10})"', stream)]
         self.assertTrue(targets)
         for target in targets:
             self.assertLess(target, len(stream))
@@ -150,7 +150,7 @@ class FileposOffsetTests(unittest.TestCase):
             [('c1.xhtml', '<html><body><h1>第一章</h1><p>正文。</p></body></html>')],
             [book_module.TocEntry('第一章', 'c1.xhtml')])
         serializer, stream = stream_of(book)
-        for target in re.findall(rb'filepos=(\d{10})', stream):
+        for target in re.findall(rb'filepos="(\d{10})"', stream):
             offset = int(target)
             self.assertGreaterEqual(offset, serializer.body_start)
             self.assertLess(offset, len(stream))
@@ -168,7 +168,7 @@ class FileposOffsetTests(unittest.TestCase):
                          '<p><a href="missing.xhtml">坏链接</a></p></body></html>'),
         ])
         serializer, stream = stream_of(book)
-        targets = [int(value) for value in re.findall(rb'filepos=(\d{10})', stream)]
+        targets = [int(value) for value in re.findall(rb'filepos="(\d{10})"', stream)]
         self.assertNotIn(serializer.body_start, targets,
                          '坏链接被回填成书首位置')
         self.assertTrue(all(target == 0 for target in targets),
@@ -186,7 +186,7 @@ class FileposOffsetTests(unittest.TestCase):
         self.assertIn('<h1>第一章</h1>', text)
         self.assertIn('<h1>第二章</h1>', text)
         # 每个 10 位数字都在 filepos= 之后，不出现在标签名里。
-        self.assertEqual(text.count('filepos='), len(re.findall(r'filepos=\d{10}', text)))
+        self.assertEqual(text.count('filepos='), len(re.findall(r'filepos="\d{10}"', text)))
 
 
 class FragmentLinkTests(unittest.TestCase):
@@ -213,7 +213,7 @@ class FragmentLinkTests(unittest.TestCase):
         ])
         serializer, stream = stream_of(book)
         target = serializer.id_offsets['c2.xhtml#sec2']
-        self.assertIn(target, [int(v) for v in re.findall(rb'filepos=(\d{10})', stream)])
+        self.assertIn(target, [int(v) for v in re.findall(rb'filepos="(\d{10})"', stream)])
         self.assertTrue(stream[target:].startswith(b'<h2 id="sec2">'))
 
     def test_same_document_fragment_resolves_to_the_anchor(self):
@@ -225,7 +225,7 @@ class FragmentLinkTests(unittest.TestCase):
         serializer, stream = stream_of(book)
         self.assertIn('<a filepos=', stream.decode('utf-8'))
         target = serializer.id_offsets['c1.xhtml#sec1']
-        self.assertIn(target, [int(v) for v in re.findall(rb'filepos=(\d{10})', stream)])
+        self.assertIn(target, [int(v) for v in re.findall(rb'filepos="(\d{10})"', stream)])
         self.assertTrue(stream[target:].startswith(b'<h2 id="sec1">'))
 
     def test_fragment_only_anchor_does_not_invent_a_path(self):
@@ -245,7 +245,7 @@ class FragmentLinkTests(unittest.TestCase):
             ('c2.xhtml', '<html><body><h1>二</h1></body></html>'),
         ])
         serializer, stream = stream_of(book)
-        targets = [int(v) for v in re.findall(rb'filepos=(\d{10})', stream)]
+        targets = [int(v) for v in re.findall(rb'filepos="(\d{10})"', stream)]
         self.assertIn(serializer.id_offsets['c2.xhtml'], targets)
 
 
@@ -335,7 +335,7 @@ class InlineTocTests(unittest.TestCase):
         """guide 的 toc 指向内联目录，不是第一章。"""
         serializer, stream = stream_of(self.build())
         text = stream.decode('utf-8')
-        reference = re.search(r'<reference type="toc"[^>]*filepos=(\d{10})', text)
+        reference = re.search(r'<reference type="toc"[^>]*filepos="(\d{10})"', text)
         self.assertIsNotNone(reference)
         offset = int(reference.group(1))
         self.assertLess(offset, serializer.id_offsets['c1.xhtml'])
@@ -345,7 +345,7 @@ class InlineTocTests(unittest.TestCase):
         """start 仍指向第一章，打开书停在那里，不是停在内联目录。"""
         serializer, stream = stream_of(self.build())
         text = stream.decode('utf-8')
-        reference = re.search(r'<reference type="start"[^>]*filepos=(\d{10})', text)
+        reference = re.search(r'<reference type="start"[^>]*filepos="(\d{10})"', text)
         self.assertIsNotNone(reference)
         self.assertEqual(int(reference.group(1)), serializer.id_offsets['c1.xhtml'])
 
@@ -363,6 +363,32 @@ class InlineTocTests(unittest.TestCase):
         text = stream.decode('utf-8')
         self.assertNotIn('<b>目录</b>', text)
         self.assertNotIn('mobi_toc', text)
+
+    def test_filepos_values_are_quoted(self):
+        """filepos 的值必须带引号。
+
+        MOBI 规范写的是 filepos="0000000000"。少了引号读端可能整个属性
+        都不认，Kindle 上章节之间的跳转就点不动。
+        """
+        _, stream = stream_of(self.build())
+        text = stream.decode('utf-8')
+        self.assertIn('filepos="', text)
+        # 不能有不带引号的 filepos=
+        for match in re.finditer(r'filepos=([^\s>]+)', text):
+            self.assertTrue(match.group(1).startswith('"'),
+                            'filepos 的值没带引号：%r' % match.group(0))
+
+    def test_kf8_guide_has_no_toc_reference(self):
+        """KF8 的 guide 索引项是空的，toc 引用只会指向不存在的锚点。
+
+        目录由 NCX 索引提供，正文里也没有内联目录；写一个 toc 引用，
+        Kindle 上「跳转目录」会跳到正文开头。start 引用要留着——
+        它决定打开书停在哪一章。
+        """
+        _, stream = stream_of(self.build(), kf8=True)
+        text = stream.decode('utf-8')
+        self.assertNotIn('type="toc"', text)
+        self.assertIn('type="start"', text)
 
     def test_start_reference_survives_a_linkless_first_entry(self):
         """顶层第一项是没有链接的分组标题时，仍要写出 start 引用。
@@ -405,11 +431,11 @@ class InlineTocTests(unittest.TestCase):
         stream = text_stream_of(mobi_writer.build_mobi(book))
         text = stream.decode('utf-8')
         self.assertIn('<b>目录</b>', text)
-        for target in re.findall(r'filepos=(\d{10})', text):
+        for target in re.findall(r'filepos="(\d{10})"', text):
             self.assertLess(int(target), len(stream))
         # 目录里的第一章条目与正文标题落在同一位置。
         chapter = stream.index('<h1>第一章</h1>'.encode('utf-8'))
-        self.assertIn(b'<a filepos=%010d>' % chapter, text.encode('utf-8'))
+        self.assertIn(b'<a filepos="%010d">' % chapter, text.encode('utf-8'))
 
 
 class TocEntriesTests(unittest.TestCase):

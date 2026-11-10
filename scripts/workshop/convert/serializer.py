@@ -84,18 +84,23 @@ class Serializer:
             # start 引用，Kindle 于是随便挑一个位置打开。
             start = _first_linked_entry(self.toc)
             toc_target = self._toc_anchor if self._toc_anchor else (start.href if start else None)
-            if toc_target:
+            # KF8 的 guide 索引项是 0xFFFFFFFF（没有 guide 记录），目录由
+            # NCX 索引提供。这里再写一个 toc 引用只会指向不存在的锚点，
+            # Kindle 上「跳转目录」会跳到正文开头。
+            if toc_target and not self.kf8:
                 # Kindle 用 filepos 跳转；Calibre 导入时按 href 的片段
                 # 去正文里找那个 id，再把它之后的 <a> 当成目录项。
                 # 两种写法都要有。
-                self.write(b'<reference type="toc" title="Table of Contents" filepos=')
+                # filepos 的值必须带引号：MOBI 规范写的是 filepos="0000000000"，
+                # 少了引号读端可能整个属性都不认，Kindle 上就点不动。
+                self.write(b'<reference type="toc" title="Table of Contents" filepos="')
                 self.href_offsets.setdefault(toc_target, []).append(len(self.buf))
-                self.write(('0000000000 href="#%s" />' % TOC_ID).encode('utf-8'))
+                self.write(('0000000000" href="#%s" />' % TOC_ID).encode('utf-8'))
             if start is not None:
-                self.write(b'<reference type="start" title="Start Reading" filepos=')
+                self.write(b'<reference type="start" title="Start Reading" filepos="')
                 self.href_offsets.setdefault(start.href, []).append(len(self.buf))
                 self._start_href = start.href
-                self.write(b'0000000000 />')
+                self.write(b'0000000000" />')
             self.write(b'</guide>')
         self.write(b'</head>')
 
@@ -233,11 +238,14 @@ class Serializer:
                 href = attrs.get('href', '')
                 target = self.resolve(base_href, href)
                 if target:
-                    out.extend(b'<a filepos=')
+                    # filepos 的值带引号才是 MOBI 规范里的写法：
+                    # <a filepos="0000000403">。少了引号读端不认这个属性，
+                    # 章节之间的跳转在 Kindle 上点不动。
+                    out.extend(b'<a filepos="')
                     # 回填用的是整条文本流里的绝对位置，不是本片段内的位置。
                     self.href_offsets.setdefault(target, []).append(
                         self.fragment_start + len(out))
-                    out.extend(b'0000000000')
+                    out.extend(b'0000000000"')
                     out.extend(b'>')
                     self.render(child, base_href, out)
                     out.extend(b'</a>')
