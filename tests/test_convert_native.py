@@ -428,6 +428,64 @@ def split_records(data):
             for i in range(count)]
 
 
+class RenamedDocumentLinkTests(unittest.TestCase):
+    """文档改名后，别的文档里指向它的链接要跟着改。"""
+
+    def test_links_to_a_renamed_document_are_retargeted(self):
+        """扩展名不合规的文档会被改名，正文里的链接要指向新名字。
+
+        以前只改目录项，正文里的 <a> 还指着旧文件名，
+        写出时的校验直接报「Broken resource reference」，转换失败。
+        """
+        container = ('<?xml version="1.0"?><container '
+                     'xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">'
+                     '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                     'media-type="application/oebps-package+xml"/></rootfiles></container>')
+        package = ('<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" '
+                   'version="3.0" unique-identifier="id"><metadata '
+                   'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                   '<dc:identifier id="id">x</dc:identifier><dc:title>书</dc:title>'
+                   '<dc:language>zh</dc:language></metadata><manifest>'
+                   '<item id="c1" href="chapter.one.txt" media-type="application/xhtml+xml"/>'
+                   '<item id="c2" href="other.txt" media-type="application/xhtml+xml"/>'
+                   '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
+                   'properties="nav"/></manifest><spine><itemref idref="c1"/>'
+                   '<itemref idref="c2"/></spine></package>')
+        first = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+                 '<head><title>章</title></head><body>'
+                 '<p><a href="other.txt">到下一章</a></p></body></html>')
+        second = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+                  '<head><title>二</title></head><body><p>第二章</p></body></html>')
+        nav = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" '
+               'xmlns:epub="http://www.idpf.org/2007/ops"><head><title>目录</title></head>'
+               '<body><nav epub:type="toc"><ol><li><a href="chapter.one.txt">一</a></li>'
+               '<li><a href="other.txt">二</a></li></ol></nav></body></html>')
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / 'a.epub'
+            with zipfile.ZipFile(source, 'w') as archive:
+                archive.writestr('mimetype', b'application/epub+zip',
+                                 compress_type=zipfile.ZIP_STORED)
+                archive.writestr('META-INF/container.xml', container.encode())
+                archive.writestr('OEBPS/content.opf', package.encode())
+                archive.writestr('OEBPS/chapter.one.txt', first.encode())
+                archive.writestr('OEBPS/other.txt', second.encode())
+                archive.writestr('OEBPS/nav.xhtml', nav.encode())
+            book = epub_input.read(source)
+            target = Path(temp) / 'o.epub'
+            epub_output.write(book, target)
+            with zipfile.ZipFile(target) as archive:
+                names = archive.namelist()
+                chapter = archive.read('OEBPS/c0001.xhtml').decode()
+                directory = archive.read('OEBPS/nav.xhtml').decode()
+        # 被改名的文档换了名字
+        self.assertIn('OEBPS/c0002.xhtml', names)
+        # 正文里的链接指向新名字
+        self.assertIn('href="c0002.xhtml"', chapter)
+        self.assertNotIn('other.txt', chapter)
+        # 目录也一样
+        self.assertNotIn('other.txt', directory)
+
+
 class MobiFormatTests(unittest.TestCase):
     """MOBI 格式的几处硬性约定，错了会让阅读器读不出来。"""
 

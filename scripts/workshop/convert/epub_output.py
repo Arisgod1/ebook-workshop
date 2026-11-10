@@ -109,8 +109,18 @@ def _assemble(book):
         ident = _unique_ident('title', manifest)
         add_document(ident, href, 'application/xhtml+xml', _title_page(book))
         spine.insert(0, ident)
+    # 文档改名后，正文里指向它的链接要跟着改；目录项同理。
     if renames:
-        _apply_renames(book.toc, dict((old, new) for old, (new, _) in renames.items()))
+        mapping = dict((old, new) for old, (new, _) in renames.items())
+        for index, (document, href) in enumerate(zip(book.documents, hrefs), 1):
+            path = CONTENT_DIR + '/' + href
+            content = files.get(path)
+            if content is None:
+                continue
+            alt = document.href if document.href in renames else None
+            rewritten = _retarget_links(content.decode('utf-8'), href, mapping, alt)
+            files[path] = rewritten.encode('utf-8')
+        _apply_renames(book.toc, mapping)
 
     # 图片。沿用读入时的包内路径，文档里的引用才不用改。
     for image in book.images.values():
@@ -280,6 +290,46 @@ def _rewrite_links(content, old_href, new_href):
         if resolved.startswith('../'):
             return match.group(0)
         relative = posixpath.relpath(resolved, new_dir or '.') if resolved else path
+        return '%s"%s%s"' % (match.group(1), relative,
+                             separator + fragment if separator else '')
+
+    return re.sub(r'((?:src|href)\s*=\s*)"([^"]*)"', replace, content)
+
+
+def _retarget_links(content, base_href, renames, alt_base=None):
+    """文档改名后，把指向被改名文档的链接改到新名字。
+
+    base_href 是这份文档自己的路径；renames 是 {旧路径: 新路径}。
+    链接按 base_href 解析成包内路径后再比对，命中才改。
+    目录项由 _apply_renames 处理，正文里的 <a> 走这里。
+
+    alt_base 是这份文档改名前的路径：文档被改名时，它内部的相对链接
+    仍是按旧位置写的，只按新路径解析会算错目标，所以两种都试。
+    """
+    if not renames:
+        return content
+
+    def resolve(base, relative):
+        if relative.startswith('/'):
+            return relative.lstrip('/')
+        return posixpath.normpath(
+            posixpath.join(posixpath.dirname(base), relative))
+
+    def replace(match):
+        value = match.group(2)
+        if not value or '://' in value or value.startswith(('mailto:', 'data:', 'tel:')):
+            return match.group(0)
+        path, separator, fragment = value.partition('#')
+        if not path:
+            # 纯片段：指向本文档自身。文档改名时这个锚点还在原地。
+            return match.group(0)
+        resolved = resolve(base_href, path)
+        target = renames.get(resolved)
+        if target is None and alt_base is not None:
+            target = renames.get(resolve(alt_base, path))
+        if target is None:
+            return match.group(0)
+        relative = posixpath.relpath(target, posixpath.dirname(base_href) or '.')
         return '%s"%s%s"' % (match.group(1), relative,
                              separator + fragment if separator else '')
 
