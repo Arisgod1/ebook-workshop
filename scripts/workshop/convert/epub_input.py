@@ -346,8 +346,7 @@ def _document_html(root, body):
     body 锚点的链接才不会断。XML 声明由写出端统一加：放进这里的字符串
     会被 MOBI 的文本流当成可见文字印出来。
     """
-    inner = (body.text or '') + ''.join(ET.tostring(child, encoding='unicode')
-                                        for child in body)
+    inner = (body.text or '') + ''.join(epub.dump_text(child) for child in body)
     # 根元素已经声明了默认命名空间，子元素上的重复声明去掉。
     inner = inner.replace(' xmlns="%s"' % epub.H, '')
     inner = _BODY_TAG.sub('', inner)          # 保证只有一个 body

@@ -347,6 +347,41 @@ class EpubLoadTests(unittest.TestCase):
                 epub.load(path)
         self.assertIn('OEBPS/content.opf', str(caught.exception))
 
+    def test_deeply_nested_document_gives_a_readable_error(self):
+        """嵌套几千层的文档要报一句话，而不是一屏 RecursionError 堆栈。"""
+        from workshop.convert import epub_input
+        deep = '<div>' * 3000 + '正文' + '</div>' * 3000
+        document = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+                    '<head><title>深</title></head><body>' + deep + '</body></html>')
+        container = ('<?xml version="1.0"?><container '
+                     'xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">'
+                     '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                     'media-type="application/oebps-package+xml"/></rootfiles></container>')
+        package = ('<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" '
+                   'version="3.0" unique-identifier="id"><metadata '
+                   'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                   '<dc:identifier id="id">x</dc:identifier><dc:title>深</dc:title>'
+                   '<dc:language>zh</dc:language></metadata><manifest>'
+                   '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+                   '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
+                   'properties="nav"/></manifest><spine><itemref idref="c1"/></spine></package>')
+        nav = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" '
+               'xmlns:epub="http://www.idpf.org/2007/ops"><head><title>t</title></head>'
+               '<body><nav epub:type="toc"><ol><li><a href="c1.xhtml">深</a></li>'
+               '</ol></nav></body></html>')
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'a.epub'
+            with zipfile.ZipFile(path, 'w') as handle:
+                handle.writestr('mimetype', b'application/epub+zip',
+                                compress_type=zipfile.ZIP_STORED)
+                handle.writestr('META-INF/container.xml', container.encode())
+                handle.writestr('OEBPS/content.opf', package.encode())
+                handle.writestr('OEBPS/c1.xhtml', document.encode())
+                handle.writestr('OEBPS/nav.xhtml', nav.encode())
+            with self.assertRaises(ValueError) as caught:
+                epub_input.read(str(path))
+        self.assertIn('嵌套', str(caught.exception))
+
 
 class ConvertCommandTests(unittest.TestCase):
     """convert 子命令的格式与文件名约定。"""

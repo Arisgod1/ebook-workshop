@@ -52,7 +52,11 @@ def main():
         parser.error('compare requires at least two files')
     try:
         args.run(args)
-    except (ValueError, KeyError, ET.ParseError, zipfile.BadZipFile, OSError, UnicodeError, struct.error, re.error) as error:
+    except RecursionError:
+        print('Error: 文件结构嵌套过深，无法处理；请检查源文件是否异常', file=sys.stderr)
+        return 1
+    except (ValueError, KeyError, ET.ParseError, zipfile.BadZipFile, OSError, UnicodeError,
+            struct.error, re.error) as error:
         print('Error: ' + str(error), file=sys.stderr)
         return 1
     return 0

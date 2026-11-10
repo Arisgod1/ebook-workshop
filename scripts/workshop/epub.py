@@ -74,7 +74,28 @@ def xml(data):
 
 
 def dump(root):
-    return ET.tostring(root, encoding='utf-8', xml_declaration=True)
+    """把元素树写成 XHTML 字节。
+
+    ElementTree 的序列化是递归的，嵌套太深会抛 RecursionError，
+    那一屏堆栈对用户毫无意义。换成一句能看懂的话。
+    """
+    try:
+        return ET.tostring(root, encoding='utf-8', xml_declaration=True)
+    except RecursionError as error:
+        raise ValueError('文档嵌套层级过深，无法写出；'
+                         '请检查源文件是否有异常结构') from error
+
+
+def dump_text(element):
+    """把一个元素序列化成字符串（不带 XML 声明）。
+
+    同样要挡住深嵌套：读入端逐个文档序列化时，异常源在这里。
+    """
+    try:
+        return ET.tostring(element, encoding='unicode')
+    except RecursionError as error:
+        raise ValueError('文档嵌套层级过深，无法处理；'
+                         '请检查源文件是否有异常结构') from error
 
 
 def report(value):
