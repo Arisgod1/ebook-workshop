@@ -120,6 +120,33 @@ class XmlSafetyTests(unittest.TestCase):
         with self.assertRaises(xmlsafe.XmlError):
             xmlsafe.parse(b'<root><unclosed></root>')
 
+    def test_doctype_hidden_behind_a_long_comment_is_refused(self):
+        """DOCTYPE 前垫一段长注释就能躲过「只看文件开头」的检查。
+
+        以前只扫开头 8192 字节，40 KB 注释就能把实体炸弹放进来，
+        展开成十亿字符。现在用解析器自己的回调，在展开之前就拦下。
+        """
+        entities = [b'<!ENTITY a "1234567890">']
+        previous = 'a'
+        for index in range(1, 9):
+            current = chr(ord('a') + index)
+            entities.append(('<!ENTITY %s "%s">' % (current, '&%s;' % previous * 10)).encode())
+            previous = current
+        for padding in (10, 40000):
+            document = (b'<?xml version="1.0"?>\n<!-- ' + b'x' * padding + b' -->\n'
+                        + b'<!DOCTYPE document [\n' + b'\n'.join(entities) + b'\n]>\n'
+                        + b'<document>&' + previous.encode() + b';</document>\n')
+            with self.assertRaises(xmlsafe.XmlError):
+                xmlsafe.parse(document)
+
+    def test_utf16_entity_bomb_is_refused(self):
+        """UTF-16 编码的实体炸弹也要拦得住。"""
+        document = ('<?xml version="1.0" encoding="UTF-16"?>\n'
+                    '<!DOCTYPE d [<!ENTITY a "1234567890">]>\n'
+                    '<d>&a;</d>\n')
+        with self.assertRaises(xmlsafe.XmlError):
+            xmlsafe.parse(document.encode('utf-16'))
+
     def test_docx_with_entities_is_refused(self):
         with tempfile.TemporaryDirectory() as temp:
             path = make_docx(

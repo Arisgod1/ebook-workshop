@@ -4,57 +4,68 @@ ElementTree 默认接受 DTD 里的实体定义，几十字节就能展开成上
 把命令行工具拖死。这里放行普通的 DOCTYPE 声明，但拒绝带内部子集
 或实体定义的那种——它们才是实体炸弹的载体。
 
-检查要在**解码之后**做：XML 可能是 UTF-16，按字节匹配的规则会被
-另一种编码绕过去（同一份实体炸弹换成 UTF-16 就能溜进来）。
+检查用**解析器自己的回调**而不是扫文本：DOCTYPE 声明可以出现在根元素
+之前的任意位置（前面垫一段长注释就能躲过「只看文件开头」的检查），
+扫文本永远有被绕开的可能。Expat 的 EntityDeclHandler 在解析到实体
+定义的那一刻就会告诉我们，正好在展开之前。
+
+编码也不用操心：Expat 自己认 UTF-8 / UTF-16 / 带 BOM 的形式。
 """
 
-import re
 import xml.etree.ElementTree as ET
-
-# 带内部子集的 DOCTYPE：<!DOCTYPE ... [ ... ]>。
-_INTERNAL_SUBSET = re.compile(r'<!DOCTYPE[^>\[]*\[', re.IGNORECASE)
-# 实体定义。
-_ENTITY = re.compile(r'<!ENTITY', re.IGNORECASE)
-
-# 检查只看文件开头这么多字节：实体声明总在文件头部。
-HEAD_LIMIT = 8192
+import xml.parsers.expat
 
 
 class XmlError(ValueError):
     """XML 不安全或无法解析。"""
 
 
-def _decode_head(data):
-    """取文件开头的文字，无论它是 UTF-8 还是 UTF-16。
-
-    解码不出来就退回按字节看——宁可误报也不要漏掉实体声明。
-    """
-    for encoding in ('utf-8-sig', 'utf-16', 'utf-16-le', 'utf-16-be'):
-        try:
-            return data.decode(encoding, errors='strict')
-        except (UnicodeDecodeError, LookupError):
-            continue
-    return data.decode('latin-1', errors='replace')
+class _StopScan(Exception):
+    """扫描到实体声明就中止，不再往下走。"""
 
 
-def _looks_like(text, pattern):
-    """在文字里找特征。
+class _EntityGuard:
+    """用 Expat 的回调在实体展开之前拦住实体定义。"""
 
-    UTF-16 的 ASCII 字符之间夹着零字节，直接匹配会漏。
-    把零字节去掉再找一次，两种编码都拦得住。
-    """
-    if pattern.search(text):
-        return True
-    squeezed = text.replace('\x00', '')
-    return bool(pattern.search(squeezed))
+    def __init__(self):
+        self.found = None
+
+    def entity_decl(self, name, is_parameter, value, base, system_id, public_id,
+                    notation_name):
+        # 记下第一个就够：只要有实体定义就拒绝。
+        if self.found is None:
+            self.found = name
+        # 立刻中止：继续解析等于替攻击者把炸弹展开一遍。
+        raise _StopScan()
+
+    def external_entity_ref(self, context, base, system_id, public_id):
+        self.found = self.found or '#external'
+        raise _StopScan()
 
 
 def parse(data):
-    """解析 XML，拒绝带内部子集或实体定义的内容。"""
+    """解析 XML，拒绝带内部子集或实体定义的内容。
+
+    先用 Expat 扫一遍看有没有实体声明，再交给 ElementTree 真正解析。
+    两步分开是有意的：Expat 那步只判定，不构造元素树，代价很小，
+    而它在展开实体之前就把人拦下来了。
+    """
     if isinstance(data, str):
         data = data.encode('utf-8')
-    head = _decode_head(data[:HEAD_LIMIT * 4])
-    if _looks_like(head, _INTERNAL_SUBSET) or _looks_like(head, _ENTITY):
+    guard = _EntityGuard()
+    scanner = xml.parsers.expat.ParserCreate()
+    scanner.EntityDeclHandler = guard.entity_decl
+    scanner.ExternalEntityRefHandler = guard.external_entity_ref
+    try:
+        scanner.Parse(data, True)
+    except _StopScan:
+        pass
+    except xml.parsers.expat.ExpatError:
+        # 语法本身有问题，交给下面的 ElementTree 去报错。
+        pass
+    except Exception:
+        pass
+    if guard.found:
         raise XmlError('XML contains entity declarations; refusing to expand it')
     try:
         return ET.fromstring(data)
