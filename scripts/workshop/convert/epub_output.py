@@ -215,9 +215,16 @@ def _xhtml_document(content, href, language='zh-CN'):
         namespaces += ' lang="%s" xml:lang="%s"' % (
             html.escape(language), html.escape(language))
     if not head:
-        head = ('<head><title></title><meta charset="utf-8"/>'
-                '<link rel="stylesheet" href="%s"/></head>'
-                % html.escape(_relative_to(href, STYLE_HREF)))
+        head = '<head><title></title><meta charset="utf-8"/></head>'
+    # 样式表链接：文档自己没引才补。写出来的书带了 style.css，
+    # 正文文档却不引用它，缩进行距这些规则就整份不生效——
+    # 之前只在「文档连 head 都没有」时才补，正好漏掉了自带 head 的正文。
+    if 'stylesheet' not in head:
+        href = html.escape(_relative_to(href, STYLE_HREF))
+        if '</head>' in head:
+            head = head.replace('</head>', '<link rel="stylesheet" href="%s"/></head>' % href, 1)
+        else:
+            head += '<link rel="stylesheet" href="%s"/>' % href
     # body 自己的属性要留着：目录可能指向 <body id="...">，
     # 丢掉了就成了悬空锚点。片段没有 body 标签时用空的。
     body_attributes = ''

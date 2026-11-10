@@ -14,6 +14,18 @@ class BuildTests(Workspace):
         self.assertIn('这是一份自造的测试文字 & < >。', epub_text(book, 'OEBPS/c0001.xhtml'))
         self.assertTrue(run('validate', book)['structural_validation'].startswith('passed'))
 
+    def test_every_document_references_the_stylesheet(self):
+        """写出的书带了 style.css，正文文档就必须引用它，否则排版规则不生效。"""
+        book = self.build()
+        entries = epub_entries(book)
+        self.assertIn('OEBPS/style.css', entries)
+        for name, body in entries.items():
+            if not name.endswith('.xhtml'):
+                continue
+            text = body.decode('utf-8')
+            self.assertIn('rel="stylesheet"', text, '%s 没引用样式表' % name)
+            self.assertEqual(text.count('rel="stylesheet"'), 1, '%s 引用了多次' % name)
+
     def test_front_matter_and_afterword_are_kept(self):
         """作者资料和作者留言按原位置保留，不被当成正文丢掉。"""
         book = self.build()

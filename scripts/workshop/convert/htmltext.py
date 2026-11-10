@@ -50,6 +50,7 @@ def document(title, level, body):
 
     title 是 <title> 里的文字，level 是正文标题的层级（1-6），
     body 是已经渲染好的内容片段。
+    样式表由写出端统一挂上，这里不管。
     """
     level = min(max(level, 1), 6)
     return ('<html xmlns="%s"><head><title>%s</title></head><body>'
