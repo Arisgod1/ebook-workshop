@@ -1119,5 +1119,55 @@ class StylesheetPreservationTests(unittest.TestCase):
         self.assertEqual(written, custom)
         self.assertEqual(opf.count('href="style.css"'), 1, '样式表登记了两次')
 
+    def test_other_stylesheets_do_not_leave_an_orphan_style_css(self):
+        """原书只有别的 CSS 时，包里那份默认 style.css 必须有 manifest 项。
+
+        生成的 nav 与标题页都引用 style.css，所以它必须存在；
+        但如果清单里没有它，写出时的校验会报「资源不存在」。
+        """
+        container = ('<?xml version="1.0"?><container '
+                     'xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">'
+                     '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                     'media-type="application/oebps-package+xml"/></rootfiles></container>')
+        package = ('<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" '
+                   'version="3.0" unique-identifier="id"><metadata '
+                   'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                   '<dc:identifier id="id">x</dc:identifier><dc:title>书</dc:title>'
+                   '<dc:language>zh</dc:language></metadata><manifest>'
+                   '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+                   '<item id="css" href="Styles/main.css" media-type="text/css"/>'
+                   '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
+                   'properties="nav"/></manifest><spine><itemref idref="c1"/></spine></package>')
+        doc = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+               '<head><title>章</title><link rel="stylesheet" href="Styles/main.css"/>'
+               '</head><body><p>正文</p></body></html>')
+        nav = ('<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" '
+               'xmlns:epub="http://www.idpf.org/2007/ops"><head><title>目录</title></head>'
+               '<body><nav epub:type="toc"><ol><li><a href="c1.xhtml">章</a></li>'
+               '</ol></nav></body></html>')
+        own = 'body{font-family:"MyFont";color:#123}'
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / 'a.epub'
+            with zipfile.ZipFile(source, 'w') as archive:
+                archive.writestr('mimetype', b'application/epub+zip',
+                                 compress_type=zipfile.ZIP_STORED)
+                archive.writestr('META-INF/container.xml', container.encode())
+                archive.writestr('OEBPS/content.opf', package.encode())
+                archive.writestr('OEBPS/c1.xhtml', doc.encode())
+                archive.writestr('OEBPS/nav.xhtml', nav.encode())
+                archive.writestr('OEBPS/Styles/main.css', own.encode())
+            book = epub_input.read(source)
+            target = Path(temp) / 'o.epub'
+            epub_output.write(book, target)
+            with zipfile.ZipFile(target) as archive:
+                names = archive.namelist()
+                opf = archive.read('OEBPS/content.opf').decode()
+                kept = archive.read('OEBPS/Styles/main.css').decode()
+        self.assertIn('OEBPS/Styles/main.css', names)
+        self.assertIn('OEBPS/style.css', names)
+        self.assertEqual(kept, own)
+        self.assertIn('href="style.css"', opf, '默认 style.css 没登记进 manifest')
+        self.assertIn('href="Styles/main.css"', opf)
+
 if __name__ == '__main__':
     unittest.main()

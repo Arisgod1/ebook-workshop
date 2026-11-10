@@ -36,12 +36,6 @@ def write(book, path):
 def _assemble(book):
     """生成 EPUB 的全部部件。"""
     files = {'mimetype': b'application/epub+zip'}
-    # 原书自带 style.css 时以它为准：那是作者排的版，不能被默认样式覆盖。
-    # 别的读入端没有样式表，才写默认那份。
-    if STYLE_HREF in book.styles:
-        files[CONTENT_DIR + '/' + STYLE_HREF] = book.styles[STYLE_HREF].encode('utf-8')
-    else:
-        files[CONTENT_DIR + '/' + STYLE_HREF] = BASE_CSS.encode()
     files['META-INF/container.xml'] = (
         '<?xml version="1.0"?><container xmlns="' + epub.C
         + '" version="1.0"><rootfiles><rootfile full-path="' + CONTENT_DIR + '/content.opf"'
@@ -137,12 +131,20 @@ def _assemble(book):
         manifest.append({'id': ident, 'href': href, 'media-type': media_type})
 
     # 样式表。原样带走，正文的排版才保得住。
-    # style.css 已在开头写好并登记，这里只处理别的样式表。
-    for href, text in book.styles.items():
-        if href in {STYLE_HREF, NCX_HREF, NAV_HREF, nav_href, 'content.opf'} or href in hrefs:
+    # 这里统一登记：默认样式表、原书自带的 style.css、原书的其他样式表，
+    # 凡是实际写进包里的都要在清单里有一条，否则写出时的校验会发现
+    # 「包里有文件、清单里没有」或反过来。
+    stylesheets = dict(book.styles)
+    # style.css 必须始终存在：生成的 nav 与标题页都引用它。
+    # 原书自带就用原书的（那是作者排的版），没有才补默认那份。
+    if STYLE_HREF not in stylesheets:
+        stylesheets[STYLE_HREF] = BASE_CSS
+    for href, text in stylesheets.items():
+        if href in {NCX_HREF, NAV_HREF, nav_href, 'content.opf'} or href in hrefs:
             continue
         files[CONTENT_DIR + '/' + href] = text.encode('utf-8')
-        ident = _unique_ident('css%04d' % (len(manifest) + 1), manifest)
+        ident = 'css' if href == STYLE_HREF else _unique_ident(
+            'css%04d' % (len(manifest) + 1), manifest)
         manifest.append({'id': ident, 'href': href, 'media-type': 'text/css'})
 
     # 目录文档。
@@ -435,8 +437,9 @@ def _package(book, identifier, manifest, spine):
     ET.SubElement(manifest_element, epub.q(epub.O, 'item'),
                   {'id': 'ncx', 'href': NCX_HREF,
                    'media-type': 'application/x-dtbncx+xml'})
-    ET.SubElement(manifest_element, epub.q(epub.O, 'item'),
-                  {'id': 'css', 'href': STYLE_HREF, 'media-type': 'text/css'})
+    # style.css 只在确实写了的时候才登记。原书有自己的样式表时，
+    # 它们已按 css%04d 登记在上面的清单里，再塞一个 style.css 就是
+    # 指向不存在文件的 manifest 项，写出时会被校验拦下。
 
     spine_element = ET.SubElement(package, epub.q(epub.O, 'spine'), {'toc': 'ncx'})
     for ident in spine:
