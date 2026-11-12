@@ -26,18 +26,40 @@ python3 scripts/ebook.py compare '版本一.epub' '版本二.txt' '版本三.epu
 
 以第一份为基准，统计忽略空白后完全相同的段落；改写和重新分段会影响计数，不能用它直接判断缺文。`inspect` 还会报告疑似乱码的段落数和所在阅读文件路径，候选需要核实。
 
-## 扫描件 OCR 文本整理
+## 扫描件与 PDF 的文字层
 
-先在外面用 OCR 工具把逐页文字导成 TXT（本仓库不捆绑 OCR 引擎、不联网），
-再用 `ocr-text` 清洗成一行一段的普通文本：
+PDF 分两种，走的路完全不同，先判断是哪一种：
+
+- **文字可选中的单栏 PDF**：可以直接 `convert` 交给 Calibre 试转。
+  分页、段落、目录和表格可能需要重整；双栏、表格、公式的阅读顺序不保证。
+- **纯扫描 PDF（图片，没有文字层）**：脚本**不会**自动识别图片里的文字，
+  要先用外部 OCR 引擎逐页导成 TXT（本仓库不捆绑 OCR 引擎、不联网），
+  再走下面的 `ocr-text` → `build` → `proofread` 三步。
 
 ```bash
-python3 scripts/ebook.py ocr-text '/path/页/*.txt' --output '/path/正文.txt'
-python3 scripts/ebook.py build '/path/正文.txt' --title '书名' --author '作者'
-python3 scripts/ebook.py proofread '/path/书名.epub' --job '/path/校对.json'
+# 1) 清洗逐页 OCR 文本：合并硬换行、去页眉页码、归一空白
+python3 scripts/ebook.py ocr-text '/path/页/*.txt' --output '/path/work/正文.txt'
+
+# 2) 建成 EPUB（显式给 --output，后面几步都用这个路径）
+python3 scripts/ebook.py build '/path/work/正文.txt' --title '书名' --author '作者' \
+  --output '/path/work/书名.epub'
+
+# 3) 在 EPUB 上筛查错字 → AI 复核 → 写入副本
+python3 scripts/ebook.py proofread '/path/work/书名.epub' --job '/path/work/校对.json'
+python3 scripts/ebook.py proofread-review --job '/path/work/校对.json' --packet '/path/work/待复核.json'
+python3 scripts/ebook.py proofread-apply --job '/path/work/校对.json' --output '/path/work/书名-校对后.epub'
 ```
 
-它会合并被扫描件硬换行切断的句子、剔除反复出现的页眉与页码、归一全角空格，
+复核包里没有批准任何改动时，最后一步会报 `No approved corrections` 并退出——
+这是正常的，说明底本没检出需要改的错，此时不用生成副本，直接用第 2 步的 EPUB。
+
+**顺序不能跳**：`proofread` 只能读 EPUB，不能直接在 `ocr-text` 产出的 TXT 上跑
+（直接喂 TXT 会报 `File is not a zip file`）。所以要先用 `build` 把清洗后的文字
+装进 EPUB，再筛查；校对写入的是另一份副本，原 EPUB 保留。
+`build` 没给 `--output` 时会默认写到输入旁的 `整理后/书名.epub`，
+后续命令的路径要跟着改，别照抄示例里的 `/path/work/`。
+
+`ocr-text` 会合并被扫描件硬换行切断的句子、剔除反复出现的页眉与页码、归一全角空格，
 并保留章标题让 `build` 能正确分章。多个输入按自然页号排序
 （`page2.txt` 排在 `page10.txt` 前），页与页之间绝不粘死。
 
@@ -47,7 +69,8 @@ python3 scripts/ebook.py proofread '/path/书名.epub' --job '/path/校对.json'
 - 省略 `--output` 时默认写到第一个输入旁的 `整理后/书名.txt`。
 
 清洗只处理文字，不做版式重建：双栏、表格、公式的阅读顺序由 OCR 引擎决定。
-错字交给 `proofread` 筛查后人工复核，不自动改。扫描件本身仍需先跑 OCR。
+OCR 常见的形近字、繁简异体混入（`奧`、`査`、`睱`）由 `proofread` 筛查后人工复核，
+不自动改，详见 [校对流程](proofreading.md)。
 
 ## TXT → EPUB
 
@@ -71,19 +94,32 @@ python3 scripts/ebook.py build '/path/书名.txt' \
 
 ## 转换其他格式
 
+`convert` 原生支持下面这些组合，不需要装 Calibre：
+
+| 读入 | 写出 |
+| --- | --- |
+| EPUB（`.epub`）、Word（`.docx`）、ODT（`.odt`）、HTML（`.html` / `.htm`） | EPUB（`.epub`）、MOBI（`.mobi`）、AZW3（`.azw3`） |
+
+**TXT 不在这张表里**：TXT 走上一节的 `build`，`convert` 读不了 TXT。
+MOBI/AZW3 只能写出，不能作为输入读进来。
+
 ```bash
 python3 scripts/ebook.py convert '原书.docx' --title '书名' --author '作者'
 python3 scripts/ebook.py convert '原书.html' --output '整理后/书名.epub'
 python3 scripts/ebook.py convert '原书.epub' --output '整理后/书名.azw3'
 ```
 
-原生支持读入 EPUB、DOCX、ODT、HTML，写出 EPUB、MOBI、AZW3，不需要装 Calibre。
-目标格式按 `--output` 的扩展名判断；`--format epub|azw3|mobi` 只在没有指定
-`--output` 时生效。
+目标格式由 `--output` 的扩展名决定；`--format epub|azw3|mobi` **只在没有指定
+`--output` 时生效**，显式给了输出路径就以扩展名为准。
 
 `.mobi` 写纯 MOBI 6，`.azw3` 写纯 KF8 standalone，与 Calibre 的
 `MOBIOutput` / `AZW3Output` 行为一致。AZW3 不带 MOBI 6 兼容段，
 只支持 KF8 的设备能读，很老的只认 MOBI 6 的设备请改用 `.mobi`。
+
+**Calibre 的两种情况**：格式超出上表（PDF、纯文本扫描件、旧版 `.doc` 等），
+或者原生读入这本书失败（内容损坏、结构特殊、缺部件），装了 Calibre 就会自动
+交给 `ebook-convert` 再试一次；没装会明确说明缺什么、以及原生支持哪些格式。
+原生转换不改动原文件，也不覆盖已有输出。
 
 - **Word**：认得中英文标题样式（`标题 1`、`heading 1`），据此生成可跳转目录。
   列表转成 `ul`/`ol`；修订里删掉的文字不算正文。旧版 `.doc` 先用 Word 或
@@ -111,12 +147,6 @@ python3 scripts/ebook.py convert '原书.epub' --output '整理后/书名.azw3'
 
 要改成自己的排版，用 `layout` 命令（见下文），它按 `body.workshop-cn-novel`
 类名限定，只影响你点名的章节，不会波及其他文档。
-
-其余格式（PDF、旧版 Word 等）需要 Calibre。装了 Calibre 时这些格式会自动交给它处理，
-没装会明确说明。原生转换不改动原文件，也不覆盖已有输出。
-
-PDF 适合尝试转换文字可选中的单栏文件。分页、段落、目录和表格可能需要重整；
-纯扫描 PDF 先做 OCR，脚本不会自动识别图片中的文字。
 
 ## 应用已核实的勘误
 
@@ -197,6 +227,20 @@ python3 scripts/ebook.py layout /path/to/book.epub \
 
 可用 `proofread` 扫描疑点、`proofread-review` 分批复核、`proofread-apply` 应用已确认勘误。详见 [校对流程](proofreading.md)。
 
+## 注释体检与规范化
+
+```sh
+python3 scripts/ebook.py notes '原书.epub'
+python3 scripts/ebook.py notes-fix '原书.epub' --output '整理后/书名.epub'
+```
+
+`notes` 只报告不改文件：注释引用是哪一种形态、有没有断链、注释正文有没有标上
+EPUB 3 语义、圈码能不能配对。`notes-fix` 把接不上的接上，给已有链接补
+`epub:type="noteref"`、给注释正文补 `epub:type="footnote"`。
+
+配对只对圈码序列完全一致的高置信组动手，底本自己写错编号的列进报告留给人判断。
+详见 [注释说明](notes.md)。
+
 ## 代码结构
 
 命令都从 `scripts/ebook.py` 进入，内部按功能拆分：
@@ -226,9 +270,11 @@ scripts/
     correct_cmd.py      应用已核实的勘误
     cover_cmd.py        更换封面
     layout_cmd.py       排版预设
+    notes_cmd.py        注释体检与规范化
     pages_cmd.py        估算页码与 Kindle 准备
     proofread_cmd.py    校对扫描、复核包、写入
     validate_cmd.py     结构校验
 ```
 
-新增命令时在 `workshop/` 下建一个 `*_cmd.py`，实现 `register(sub)` 注册子命令即可，无需改动入口文件。
+新增命令时在 `workshop/` 下建一个 `*_cmd.py`，实现 `register(sub)` 注册子命令，
+并在 `scripts/ebook.py` 的 import 列表与 `MODULES` 元组里各加一项。

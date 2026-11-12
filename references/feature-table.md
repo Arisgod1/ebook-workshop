@@ -7,14 +7,17 @@
 
 | 读入 | EPUB | MOBI | AZW3 | 备注 |
 | --- | --- | --- | --- | --- |
-| TXT | `build` | — | — | 只走 `build`，不进格式互转管线 |
-| EPUB | ✅ | ✅ | ✅ | 目录、封面、图片、样式表、元数据一并带过去 |
-| DOCX | ✅ | ✅ | ✅ | 中英文标题样式都认得；段落级大纲级别、内容控件；`.doc` 需先另存 |
-| ODT | ✅ | ✅ | ✅ | 标题层级、列表、图片、链接、分节 |
-| HTML | ✅ | ✅ | ✅ | 按标题标签切章；行内格式与图片保留；`class="chapter"` 容器算一章 |
-| PDF / 旧 `.doc` | 需 Calibre | 需 Calibre | 需 Calibre | 没装 Calibre 时明确说明缺什么 |
+| TXT | `build` | — | — | 只走 `build`，**不进格式互转管线**；`convert` 读不了 TXT |
+| EPUB（`.epub`） | ✅ | ✅ | ✅ | 目录、封面、图片、样式表、元数据一并带过去 |
+| DOCX（`.docx`） | ✅ | ✅ | ✅ | 中英文标题样式都认得；段落级大纲级别、内容控件；`.doc` 需先另存 |
+| ODT（`.odt`） | ✅ | ✅ | ✅ | 标题层级、列表、图片、链接、分节 |
+| HTML（`.html` / `.htm`） | ✅ | ✅ | ✅ | 按标题标签切章；行内格式与图片保留；`class="chapter"` 容器算一章 |
+| PDF（有文字层）/ 旧 `.doc` | 需 Calibre | 需 Calibre | — | 超出原生读入范围，装了 Calibre 会自动交给它 |
+| PDF（纯扫描，无文字层） | 先 OCR | 先 OCR | — | 脚本不识别图片；外部 OCR → `ocr-text` → `build` → `proofread`，见 [命令参考](commands.md#扫描件与-pdf-的文字层) |
+| MOBI / AZW3 | — | — | — | 只能写出，不能作为输入读进来 |
 
-目标格式由 `--output` 扩展名决定；`--format epub|azw3|mobi` 只在未指定 `--output` 时生效。
+目标格式由 `--output` 扩展名决定；`--format` 只在未指定 `--output` 时生效。
+原生读入失败（内容损坏、缺部件）时也会自动回退 Calibre，没装会明确说明缺什么。
 
 转换保真度：正文、标题层级、目录树、图片（字节一致）、样式表、封面、
 出版信息（出版社/日期/版权等）、书籍语言。转换不改动原文件。
@@ -34,12 +37,15 @@
 | `kindle` | 备 Kindle 文件 | `--method email|usb` `--pages` |
 | `layout` | 套中文小说排版预设 | `--preset cn-novel` `--document` `--margin` `--line-height` `--indent` `--paragraph-gap` |
 | `validate` | 查书内文件与链接 | `--epubcheck` |
+| `notes` | 体检注释：断链、回链、未标语义、圈码配对 | 无 |
+| `notes-fix` | 把接不上的注释接上，统一成 EPUB 3 语义脚注 | `--output` |
 | `proofread` / `proofread-review` / `proofread-apply` | 错字筛查 → 分批复核 → 按锚点写入 | `--job` `--packet` `--decisions` `--report` |
 
 章号同时认阿拉伯数字与中文数字（`第5章`、`第十五章`、`第二百零八章`）。
 
 `cover`、`paginate`、`layout` 需要 EPUB 3；遇到 EPUB 2 的书会先自动转成 EPUB 3 再操作，
-不需要装 Calibre。
+不需要装 Calibre。`notes` 与 `notes-fix` 不升级 EPUB 版本：只读结构、只加属性，
+EPUB 2 的书跑完仍是 EPUB 2；要让语义脚注在阅读器上完整生效，先用 `convert` 升级。
 
 ## 三、贯穿全流程的契约
 
@@ -49,7 +55,7 @@
 | 不覆盖 | 目标已存在时报错退出，不静默覆盖 |
 | 原子写出 | 中断不留半个文件在目标路径 |
 | 默认输出路径 | 输入旁的 `整理后/书名.<扩展名>`，文件名用标准书名 |
-| 默认无剧透 | `inspect`/`compare` 默认不展示章名与正文片段 |
+| 默认无剧透 | `inspect`/`compare`/`notes` 默认不展示章名与正文片段；`notes` 只给位置和引用标记 |
 | 可读报错 | 错误打成 `Error: ...` 一行退出码 1，不吐堆栈 |
 | 原生优先 | 装了 Calibre 也先走原生；原生失败才回退 |
 | 跨平台 | macOS / Linux / Windows 都能跑：不依赖硬链接、权限位与 sh 脚本 |

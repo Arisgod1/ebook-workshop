@@ -24,8 +24,9 @@ Jieba 默认自动加载，已安装的版本直接使用，不比对版本或�
 | 需求 | 操作 |
 | --- | --- |
 | 检查、比较版本 | `inspect`、`compare`。章数和大小只是线索；核实完整性时对照同版目录及内容，核实最新版本时查官方出版说明。 |
-| 转成 EPUB | TXT 用 `build`；EPUB、Word（.docx）、ODT、HTML 用 `convert`，原生完成，不需要 Calibre。PDF 等其余格式才需要 Calibre。保留前置文字、作者留言与后记。 |
+| 转成 EPUB | TXT 用 `build`；EPUB、Word（.docx）、ODT、HTML 用 `convert`，原生完成，不需要 Calibre。文字可选中的 PDF 交给 Calibre 试转；纯扫描 PDF 先用外部 OCR 导成 TXT，再 `ocr-text` → `build` → `proofread`，详见 [命令参考](references/commands.md#扫描件与-pdf-的文字层)。保留前置文字、作者留言与后记。 |
 | 校对正文 | `proofread` 筛查 → 当前 Agent 复核 → `proofread-apply` 写入副本，详见下节。已有勘误清单也可用 `correct`。 |
+| 检查、接通注释 | `notes` 只报告（不写文件、不剧透），`notes-fix` 把接不上的注释接上并统一成 EPUB 3 语义标记。圈码对不上的列进报告留给人判断。详见 [注释说明](references/notes.md)。 |
 | 调整排版 | `layout --preset cn-novel`，或参考用户样板书。边距、行距、缩进均可调整；效果不确定时先试一章。 |
 | 更换封面 | `cover --image` 使用图片，或 `--from-epub` 搬用另一份书的封面。 |
 | 准备 Kindle 文件 | 邮件用 `kindle --method email`，需要估算页码时加 `--pages`；USB 用 `kindle --method usb` 生成 AZW3。详见 [页码说明](references/kindle-pages.md)。 |
@@ -36,11 +37,14 @@ Jieba 默认自动加载，已安装的版本直接使用，不比对版本或�
 
 | 读入 | 写出 |
 | --- | --- |
-| EPUB、DOCX、ODT、HTML | EPUB、MOBI、AZW3 |
+| EPUB（`.epub`）、DOCX（`.docx`）、ODT（`.odt`）、HTML（`.html` / `.htm`） | EPUB（`.epub`）、MOBI（`.mobi`）、AZW3（`.azw3`） |
+
+TXT 走 `build`，不进 `convert`；MOBI/AZW3 只能写出，不能作为输入读进来。
 
 目标格式由 `--output` 的扩展名决定；`--format` 只在没有指定 `--output` 时生效。
-PDF、纯文本扫描件、旧版 .doc 等超出原生范围，装了 Calibre 才会自动交给它处理，
-否则会明确说明缺什么。原生转换不会改动原文件，也不会覆盖已有输出。
+PDF、纯文本扫描件、旧版 .doc 等超出原生范围，或原生读入这本书失败时，
+装了 Calibre 才会自动交给它处理，否则会明确说明缺什么。原生转换不会改动原文件，
+也不会覆盖已有输出。
 
 标题层级、目录、封面与元数据都会一并带过去。Word 的中英文标题样式都认得，
 中文版 Word 的「标题 1」比 Calibre 认得更准。
@@ -55,7 +59,9 @@ PDF、纯文本扫描件、旧版 .doc 等超出原生范围，装了 Calibre �
 
 ## 交付
 
-打开输出检查封面、目录和代表性正文；修改过文字时核对差异及相关脚注跳转。输出时脚本已检查书内资源和链接，需要单独检查可用 `validate`。精修的完整步骤见 [精修流程](references/reading-workflow.md)。
+打开输出检查封面、目录和代表性正文；修改过文字时核对差异及相关脚注跳转。
+输出时脚本已检查书内资源和链接，需要单独检查可用 `validate`；
+注释是否接通、有没有断链用 `notes` 再体检一遍。精修的完整步骤见 [精修流程](references/reading-workflow.md)。
 
 交付电子书并简述实际改动，列出仍需用户判断的位置。估算页码不等于纸书页数，邮件转换后的显示需在 Kindle 上确认。
 

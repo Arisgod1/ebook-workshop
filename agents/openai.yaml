@@ -1,4 +1,4 @@
 interface:
   display_name: "电子书整理与 Kindle 页码"
-  short_description: "检查章节、比较版本、整理排版、更换封面，制作适合阅读器的电子书"
-  default_prompt: "使用 $ebook-workshop 检查这本 EPUB 的错字和阅读杂音，用中文小说预设先试排一章，保留现有目录和页码。"
+  short_description: "检查章节、比较版本、整理排版、更换封面、接通注释，制作适合阅读器的电子书"
+  default_prompt: "使用 $ebook-workshop 检查这本 EPUB 的错字和阅读杂音，用 notes 看看注释能不能点，用中文小说预设先试排一章，保留现有目录和页码。"
